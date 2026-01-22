@@ -4,6 +4,7 @@
 /certs
 /temp
 /default.etcd
+*.netsy
 
 # etcd
 default.etcd/
