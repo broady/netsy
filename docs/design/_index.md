@@ -6,7 +6,9 @@ description: "Netsy concepts and system design for data files, multi-node/replic
 
 ## In This Section
 
-- [Overview](overview.md) – Overview of Netsy terminology, requirements, leader election, and startup process
-- [Netsy Data Files](data-files.md) – Netsy (.netsy) data file format/specification
-- [Multi-Node & Replication](multi-node.md) – Netsy multi-node support & data replication system design
-- [Watches & Compaction](watches-compaction.md) – Watch support & Compaction system design
+- [Overview](overview.md) – Overview of Netsy terminology, requirements, leader election, and startup process.
+- [Leader Election](leader-election.md) - Netsy two-tier leader election system design.
+- [Netsy Data Files](data-files.md) – Netsy (.netsy) data file format/specification.
+- [Storage & Replication](storage-replication.md) – Netsy data storage and replication system design.
+- [Loading & Startup](loading-startup.md) - Outline of how Node Loading and Primary Startup states work.
+- [Watches & Compaction](watches-compaction.md) – Watch support & Compaction system design.

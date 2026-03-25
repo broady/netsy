@@ -1,6 +1,6 @@
 ---
 title: "Netsy Data Files"
-weight: 20
+weight: 30
 description: "Netsy (.netsy) data file format/specification"
 ---
 

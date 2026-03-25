@@ -1,6 +1,6 @@
 ---
 title: "Watches & Compaction"
-weight: 40
+weight: 60
 description: "Watch support & Compaction system design"
 ---
 

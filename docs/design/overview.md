@@ -80,6 +80,8 @@ Each __Node__ has three state fields which can be read via the __Peer__ API:
 
 ## Further Reading
 
-- [Netsy Data Files](data-files.md) – Netsy (.netsy) data file format/specification
-- [Multi-Node & Replication](multi-node.md) – Netsy multi-node support & data replication system design
-- [Watches & Compaction](watches-compaction.md) – Watch support & Compaction system design
+- [Leader Election](leader-election.md) - Netsy two-tier leader election system design.
+- [Netsy Data Files](data-files.md) – Netsy (.netsy) data file format/specification.
+- [Storage & Replication](storage-replication.md) – Netsy data storage and replication system design.
+- [Loading & Startup](loading-startup.md) - Outline of how Node Loading and Primary Startup states work.
+- [Watches & Compaction](watches-compaction.md) – Watch support & Compaction system design.
