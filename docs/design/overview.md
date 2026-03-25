@@ -21,14 +21,51 @@ description: "Overview of Netsy terminology, requirements, leader election, and 
 - __Advertise Address__: a host+port string used for a Client or Peer to connect to the Node or Cluster e.g. `172.16.0.1:2378` or `etcd.example.com:2378`
 - __Service Discovery__: how each Node learns about all other Nodes in a Cluster, including their Advertise addresses for Peer connections.
 
+## Node States
+
+Each __Node__ has three state fields which can be read via the __Peer__ API:
+
+1. __Health State__:
+
+    - `Loading` during its initial startup and database backfill process.
+
+    - `Healthy` when it has the latest revision within a threshold.
+
+    - `Degraded` when it has fallen behind the latest revision within a threshold.
+
+    A Node should be considered "unhealthy" if it has been in the `Loading` or `Degraded` after a timeout.
+
+2. __Elector State__:
+
+    - `Leader`: the Node has been elected and is currently the Elector.
+
+    - `Follower`: the Node is not the Elector.
+
+3. __Primary State__:
+
+    - `Replica`: the Node is a Replica and has not been elected Primary by the Elector since it started.
+
+    - `Starting`: immediately after being elected Primary, while performing "preflight checks" before becoming Active.
+
+    - `Active`: able to accept writes (provided its Chunk Buffer is not full).
+
+    - `Draining`: needing to shutdown or consistently failing to write data (or Chunk Buffer is full).
+
+    After a Primary finishes Draining the Node process gives up its Primary leadership with the Elector, and restarts into a `Replica` Primary State (with a Loading Health State).
+
 ## Requirements
 
 - Every __Node__ stores a copy of all __KV Data__ in a local SQLite database.
 - __Replicas__ can answer range (read) requests directly, but proxy any transaction (write) requests to the __Primary__.
+    - If a __Replica__ Health State is `Degraded`, it must continue to serve range (read) requests, which may return stale data. If stricter read consistency guarantees are required in the future, a Replica in `Degraded` state may instead reject or proxy read requests.
+    - By its nature the __Primary__ cannot be in a `Degraded` state.
+- Each __Node__ has an unencrypted HTTP endpoint `/health` for health-checking the Netsy process, with health determined by the Health State, which can be used by systems like Kubernetes or ASGs for health-checking the process.
 - The __Primary__ writes data to its SQLite database, object storage, and all __Replicas__.
-    - In a __Cluster__ with less than 3 active __Nodes__, writes are synchronous to the object storage bucket, and therefore it is the canonical system-of-record.
-    - Where there are 3 or more active __Nodes__, a transaction can be committed when at least 2 __Replicas__ acknowledge recording the data, and writes to object storage are asynchronous/buffered.
+    - In a __Cluster__ with less than 2 `Healthy` __Replicas__, writes are synchronous to the object storage bucket, and therefore it is the canonical system-of-record.
+    - Where there are 2 or more `Healthy` __Replicas__, a transaction can be committed when at least 2 __Replicas__ acknowledge recording the data, and writes to object storage are asynchronous/buffered.
     - Data is sent to __Replicas__ via gRPC streams, and is stored in object storage using a custom [Netsy Data File](./data-files.md) format.
+    - __Replicas__ must not accept data from the __Primary__ unless its Primary State is `Active` or `Draining`.
+    - The __Primary__ must accept connections from __Replicas__ when its Primary State is `Starting`, `Active`, or `Draining`.
 - The __Elector__ is the only __Node__ which can perform leader election for the __Cluster__ to determine which __Node__ is the __Primary__.
     - Determining which __Node__ is the __Elector__ uses a separate leader election process to the one which determines which __Node__ is the __Primary__. This may be referred to as a two-tier/dual-layer leader election system: one for the etcd writer/Primary role, one for the Elector role.
     - This two-tier approach is used because an audit must be conducted during leader election of the __Primary__ to ensure whichever __Replica__ is elected has the current latest-known etcd revision number, to prevent data loss.
