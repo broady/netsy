@@ -10,25 +10,37 @@ description: "Outline of how Node Loading and Primary Startup states work."
 
 When a Netsy process starts, it enters the `Loading` Health State and performs a "backfill" process:
 
-1. If its SQLite database does not exist, it initialises its schema.  
+1. Uses s3lect to determine the current Elector (if exists).
 
-2. Any unapplied schema migrations are run.  
-     
-3. If the SQLite database `records` table is empty, downloads and imports the latest Snapshot file from object storage (if one exists).  
+2. Registers itself via [Service Discovery](leader-election.md#service-discovery-for-nodes), if not already registered.
+
+    - Step 1: ensure a Node file exists in object storage.
+
+    - Step 2: connect to the current Elector (if exists) and register itself with the Elector.
+
+3. Initialise its SQLite database.
+
+    - If its SQLite database does not exist, create an initial schema.
+
+    - Run any unapplied schema migrations.
+
+4. If the SQLite database `records` table is empty, downloads and imports the latest Snapshot file from object storage (if one exists).
 
    - While it might be possible to retrieve this data from another Peer at a lower cost, by fetching it from object storage it ensures that it is receiving the most up-to-date source-of-truth data, and does so without causing any load on other Peers. This means you can safely bring multiple new Peers online quickly.
 
-3. Identifies and connects to the current Leader and starts streaming any Records.
+5. Connects to the current Elector (if exists) to determine the current Primary (if exists).
+
+6. Connects to the current Primary (if exists) and starts streaming any Records.
 
    - During this time, there may be a "gap" in its records until the next step completes.  
-    
-4. Backfills any records between the Snapshot and newly replicated Records from the Leader, by fetching the necessary Chunk files from object storage.  
-     
-5. Performs an integrity check to ensure there is no missing data. If there is, empty the table and restarts the process to restart backfilling.
+
+7. Backfills any records between the latest object storage Snapshot and newly replicated Records from the Primary (if exists), by fetching the necessary Chunk files from object storage.
+
+8. Performs an integrity check to ensure there is no missing data. If there is, empty/truncate the table and restarts the backfill process.
 
 Once this has completed successfully, the Health Status changes to `Healthy`.
 
-On a Cluster with only one Node, the Node shortly becomes the Elector, and quickly becomes the Primary.
+On a Cluster with only one Node, steps 5-6 are skipped, step 7 completes from object storage only, and after step 8 the Node shortly becomes the Elector, and quickly becomes the Primary.
 
 ### Primary: From Starting To Active
 
