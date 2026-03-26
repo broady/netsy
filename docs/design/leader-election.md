@@ -79,3 +79,17 @@ This approach is taken to propagate Cluster State as fast as possible.
 Cluster State push is triggered immediately as part of Netsy updating its in-memory state for Elector and Primary. When iterating over each Node to push this Cluster State, it will always push the latest Cluster State to the Primary first, followed by all other known Nodes.
 
 - When a Node receives the updated Cluster State indicating it has become the Primary, it will move its Primary State from `Replica` to `Starting` and begin to perform pre-flight checks.
+
+## Primary Node
+
+Once Replicas receives Cluster State indicating there is a new Primary elected, each Replica will immediately establish a new gRPC bidirectional stream connection to the new Primary.
+
+This stream is used to:
+
+1. Receive new Records from the Primary
+2. ACK a new Record has been committed by the Replica
+3. Send a Heartbeat if no ACK's have been sent recently
+
+Both 2 and 3 include information about the Node States such as its Health State.
+
+More details about the protocol are covered under [Object Storage & Multi-Node Replication](storage-replication.md).

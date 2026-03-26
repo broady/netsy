@@ -73,7 +73,7 @@ Each __Node__ has three state fields which can be read via the __Peer__ API:
     - In a __Cluster__ with fewer than 2 `Healthy` __Replicas__, writes are synchronous to the object storage bucket, and therefore it is the canonical system-of-record.
     - Where there are 2 or more `Healthy` __Replicas__, a transaction can be committed when at least 2 __Replicas__ acknowledge recording the data, and writes to object storage are asynchronous/buffered.
     - Data is sent to __Replicas__ via gRPC streams, and is stored in object storage using a custom [Netsy Data File](./data-files.md) format.
-    - __Replicas__ must not accept data from the __Primary__ unless its Primary State is `Active` or `Draining`.
+    - __Replicas__ must not accept data from the __Primary__ unless its Primary State is not `Replica` (must be `Starting`, `Active`, or `Draining`).
     - The __Primary__ must accept connections from __Replicas__ when its Primary State is `Starting`, `Active`, or `Draining`.
 - The __Elector__ is the only __Node__ which can perform leader election for the __Cluster__ to determine which __Node__ is the __Primary__.
     - Determining which __Node__ is the __Elector__ uses a separate leader election process to the one which determines which __Node__ is the __Primary__. This may be referred to as a two-tier/dual-layer leader election system: one for the etcd writer/Primary role, one for the Elector role.
