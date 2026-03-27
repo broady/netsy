@@ -14,7 +14,11 @@ The Primary Node is determined through a leader election process, to which its c
 
 ## Prerequisites for Replication
 
-Due to the replication model used by Netsy, there is a strict requirement when electing a new Primary: Netsy must audit all Nodes in the cluster, and ensure only Nodes with the latest known revision can become the new Primary, to prevent data loss.
+Due to the replication model used by Netsy, there is a strict requirement when electing a new Primary: Netsy must audit enough Nodes in the cluster to safely determine which has the latest known revision, to prevent data loss. The number of Nodes the Elector must contact during leader election depends on the [Quorum Configuration](storage-replication.md#quorum-configuration):
+
+- __Disabled quorum__ (`0`): the Elector does not need to contact other Nodes, since all writes are synchronous to object storage and no Node can hold un-synced data. The Elector can elect from Nodes it already knows about via recent Heartbeat data, selecting the one with the highest known revision.
+- __Static quorum__ (positive integer): the Elector must contact all registered Nodes. Since a static quorum may be less than a majority, a committed record could exist on a minority of Replicas. The Elector must verify all Nodes to find the one with the highest revision. Leader election will block until all Nodes are contactable, or until unavailable Nodes are deregistered.
+- __Majority quorum__ (`-1`): the Elector only needs to contact a majority of registered Nodes (`floor(N/2) + 1` where N is the total number of registered Nodes). This is safe because majority quorum guarantees that any committed write was ACK'd by a majority, and any other majority must overlap with at least one Node that has that write.
 
 While etcd handles this using raft, Netsy does not use consensus: instead, it uses a two-tier leader election system, allowing the audit process to more efficiently run on a single Node known as the Elector.
 
@@ -34,27 +38,64 @@ During the Node `Loading` Health State, Netsy ensures a file is written to objec
 
 When a Node becomes an Elector, it stores a map of Nodes and their addresses in-memory, populated immediately from object storage, and updated by each new Node registration directly once the Node becomes Elector (which can happen before the object storage backfill is completed). Until the initial load from object storage is complete, an Elector will not perform leader election for a new Primary.
 
+### Node Deregistration
+
+When a Node is being removed from the Cluster (e.g. scaling down, maintenance, or graceful shutdown), it must deregister itself to prevent stale entries from blocking leader election:
+
+1. The Node moves its Health State to `Degraded`.
+2. If the Node is the Primary, it moves its Primary State to `Draining` and waits until all buffered records are flushed to object storage.
+3. The Node deregisters with the current Elector directly (removing itself from the Elector's in-memory Node map).
+4. The Node deletes its registration file from object storage (under the `nodes/` prefix).
+
+The Elector must also handle stale registrations: if a registered Node has missed Heartbeats and is marked `Degraded` by the Elector, it is excluded from leader election but remains in the Node map. If a Node remains Degraded for longer than the `node_deregistration_timeout` (default: 3 minutes), the Elector automatically deregisters it by removing it from the in-memory Node map and deleting its registration file from object storage. Setting this to `0` disables automatic deregistration, requiring an operator to manually deregister unavailable Nodes. This is safe because a Degraded Node has already caused the Primary to potentially fall back to synchronous S3 writes, so no un-synced data can be lost. If the Node later recovers, it will re-register during its `Loading` process. This is particularly important for majority quorum (`-1`), where stale registrations inflate the registered Node count and raise the majority threshold unnecessarily.
+
+## Heartbeat Mechanism
+
+Each Node sends a Heartbeat to the Elector on a regular cadence. The Heartbeat contains the Node's current Health State, Primary State, and latest Revision. A Heartbeat is also embedded in every ACK sent to the Primary, sharing the same message structure, so the server-side processing of an ACK triggers the same code path as receiving a standalone Heartbeat.
+
+Each Node is aware of both the current Elector and Primary Node IDs. The Node uses this to determine when to send Heartbeats:
+
+- __To the Elector__: a Heartbeat is always sent on a regular cadence.
+- __To the Primary__: a Heartbeat is only sent if no ACK has been sent within the cadence/timeout, since every ACK already contains a Heartbeat.
+- __When the Elector and Primary are the same Node__: the Node only needs to send a single Heartbeat (or ACK) to that Node. If ACKs are being sent frequently enough, no standalone Heartbeats are needed at all.
+
+This design means the Elector and Primary use the same server-side code path for processing Heartbeats, whether they arrive as standalone Heartbeats or embedded in ACKs.
+
+### Heartbeat-Based Degradation
+
+The Elector and Primary both mark a Node as `Degraded` if it has missed 2 consecutive Heartbeats. Likewise, a Node must mark itself as `Degraded` if it has failed to successfully send an ACK or a Heartbeat after 1 immediate retry.
+
+When the Primary marks a Node as `Degraded`, it will then stop counting that Replica as healthy for quorum, and if the healthy Replica count drops below 2, the Primary falls back to synchronous object storage writes. This ensures that any committed writes are durably stored in S3 before the client receives a response, and no partitioned Replica can hold un-synced data that is not also in object storage.
+
 ## Elector Leader Election
 
 If the Elector determines no Primary exists (either via a failed health check, or failed 'who is the Primary' request from Peers), the Elector begins the leader election process:
 
-1. Retrieve the current Health State, current Primary State, Start Time, and latest Revision from each Node, including itself.
+1. If a previous Primary is known, the Elector must attempt to contact it directly, regardless of its current Health State (even if Degraded). This gives the old Primary a chance to confirm it has finished Draining and moved to `Replica`, or to report that it is still `Active` or `Draining` (in which case leader election is deferred). If the previous Primary is unreachable, the Elector retries for a configurable timeout period before proceeding without it. This timeout balances giving the old Primary time to drain against the need to restore write availability to the Cluster.
 
-2. Exit leader election and save the Primary to local memory if a single Node has the `Active` Primary State.
+2. Retrieve the current Health State, current Primary State, Start Time, and latest Revision from Nodes, including itself. The Elector already has recent Heartbeat data for each Node, but retrieves the latest state directly during election for accuracy. The number of Nodes that must be successfully contacted (excluding the previous Primary, which is handled in step 1) depends on the quorum configuration:
 
-3. Fail leader election if any of the Nodes Primary State is not `Replica`, or if a Node is uncontactable (after 2 retries, which happens once after a 10ms delay, and again after a 100ms delay).
+   - __Disabled quorum__ (`0`): no additional contactability requirement. The Elector uses its existing Heartbeat data to identify Healthy Nodes and their latest revisions. Since all writes are synchronous to S3, the Elector can safely elect from known Nodes without contacting them first.
 
-   - This guard exists to prevent data loss in the event of network partitioning when asynchronous object storage writes have occurred.
+   - __Static quorum__ (positive integer): all registered Nodes must be contacted. Since a static quorum may be less than a majority, the Elector cannot safely exclude any Node — a committed record may only exist on a minority of Replicas. Leader election will block until all Nodes respond, or until unavailable Nodes are deregistered.
 
-   - This also prevents a new Primary being elected while the existing Primary is `Starting`, `Active`, or `Draining`.
+   - __Majority quorum__ (`-1`): a majority of registered Nodes (`floor(N/2) + 1`) must be successfully contacted. Fail leader election if fewer than a majority respond. This is safe because any committed quorum write was ACK'd by a majority of Nodes, so any majority the Elector contacts must include at least one Node with the latest data.
 
-   - Note that the correct process for Nodes to be removed is they should move to a Degraded Health State and should deregister themselves (first in object storage, and also with the current Elector) to prevent this scenario from happening during planned changes.
+3. Exit leader election and save the Primary to local memory if a single Node has the `Active` Primary State.
 
-4. Filter any Nodes not in the `Healthy` Health State. Fail leader election if the Nodes list is empty.
+4. Fail leader election if any of the contacted Nodes has a Primary State that is not `Replica`.
 
-5. Sort remaining Nodes by the latest Revision from highest to lowest, then by the Node Start Time, and filter any below the largest Revision number.
+   - This prevents a new Primary being elected while the existing Primary is `Starting`, `Active`, or `Draining`.
 
-6. Elects the first of the remaining Nodes which will have the highest Revision number and latest Start Time. That Node may be itself if it has an equal or highest Revision number.
+   - Degraded Nodes (other than the previous Primary, which is handled in step 1) are excluded from this check. Because a Node that cannot reach the Elector self-degrades and communicates this to the Primary (causing a fallback to synchronous S3 writes), a Degraded Node cannot hold un-synced data that is not already in object storage. This makes it safe to proceed with leader election without contacting Degraded Nodes.
+
+   - For planned Node removal, see [Node Deregistration](#node-deregistration).
+
+5. Filter any Nodes not in the `Healthy` Health State. Fail leader election if the Nodes list is empty.
+
+6. Sort remaining Nodes by the latest Revision from highest to lowest, then by the Node Start Time, and filter any below the largest Revision number.
+
+7. Elects the first of the remaining Nodes which will have the highest Revision number and latest Start Time. That Node may be itself if it has an equal or highest Revision number.
 
   - The latest Start Time is picked as Nodes may be periodically rotated, and selecting the newest Node will presumably result in the longest leadership lifetime.
 
@@ -64,11 +105,11 @@ Leader election will continue retrying every 500 milliseconds until successful, 
 
 ## Node State Checks & Cluster State Push
 
-Once an Elector is newly elected and has loaded its Service Discovery map, it can begin to push Cluster State to each Node, and periodically polls each node for its Node State information.
+Once an Elector is newly elected and has loaded its Service Discovery map, it can begin to push Cluster State to each Node, and receive Node State information via Heartbeats from each Node.
 
 - Cluster State includes the current Elector and current Primary.
 
-- Node State periodically retrieved from each Node includes its current Health State, current Primary State, and latest Revision.
+- Node State is received by the Elector from each Node via Heartbeats (sent on a regular cadence, and embedded in every ACK sent to the Primary). This includes the Node's current Health State, current Primary State, and latest Revision.
 
 This approach is taken to propagate Cluster State as fast as possible.
 
@@ -87,9 +128,9 @@ Once Replicas receives Cluster State indicating there is a new Primary elected, 
 This stream is used to:
 
 1. Receive new Records from the Primary
-2. ACK a new Record has been committed by the Replica
-3. Send a Heartbeat if no ACK's have been sent recently
+2. ACK a new Record has been committed by the Replica (every ACK embeds a Heartbeat message containing the Node's current state)
+3. Send a standalone Heartbeat if no ACK has been sent within the heartbeat cadence/timeout
 
-Both 2 and 3 include information about the Node States such as its Health State.
+The Primary processes ACK Heartbeats and standalone Heartbeats using the same code path, since both contain identical Node State information (Health State, Primary State, latest Revision).
 
 More details about the protocol are covered under [Object Storage & Multi-Node Replication](storage-replication.md).
