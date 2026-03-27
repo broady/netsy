@@ -105,6 +105,21 @@ The Primary crashes and two Replicas have their VMs terminated with ephemeral st
 
 ---
 
+## Scenario 8: Primary Crashes After Quorum Rollback (Tentative Record)
+
+The Primary sends a record to Replicas, but quorum is not met. The Primary rolls back the transaction, then crashes before retrying. One Replica has stored the tentative record (above `committed_revision`), the others have not.
+
+Example: 3-node cluster, Primary A sends revision 57 to B and C. Only B ACKs (commits to SQLite). Quorum not met. Primary rolls back, then crashes. B has revision 57 (tentative), C has revision 56. `committed_revision` remains at 56.
+
+| | `0` (Disabled) | `-1` (Majority) | `2` (Static) |
+|---|---|---|---|
+| **3-node cluster** | N/A — quorum is disabled, all writes are synchronous to S3. The Primary would not have sent a quorum transaction. | B has tentative revision 57, C has revision 56. Elector contacts majority (2). B reports latest revision 57, C reports 56. B is elected. During Starting preflight, B reconciles with S3 (revision 57 is not in S3), adopts it as committed, uploads to S3, sets `committed_revision` = 57. The client received an error for the original write, but the data is preserved — no inconsistency since the client can retry and discover the record exists. No data loss. | Same behavior as majority for 3 nodes (both require 2 ACKs). B elected with highest revision, adopts tentative record. No data loss. |
+| **5-node cluster** | N/A | B has tentative revision 57. Elector contacts majority (3). If B is among them, B has the highest revision and is elected. If B is not among the majority, all contacted Nodes have revision 56 — one is elected, and B's tentative revision 57 is overwritten when B connects to the new Primary (since 57 > `committed_revision` of 56, it is tentative and can be overwritten). Either way, no inconsistency — the client received an error. | Elector contacts all Nodes. B has the highest revision and is elected. Same as majority outcome. No data loss. |
+| **7-node cluster** | N/A | Same as 5-node. B elected if in the majority, otherwise tentative record overwritten. No inconsistency. | Same as 5-node. B elected (highest revision). No data loss. |
+| **Operator action** | None | None | None |
+
+---
+
 ## Summary
 
 | Quorum | Safety | Availability During Failure | Operator Burden |

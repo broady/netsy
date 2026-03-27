@@ -1,10 +1,10 @@
 ---
-title: "Loading & Startup"
+title: "Loading, Startup, & Shutdown"
 weight: 50
-description: "Outline of how Node Loading and Primary Startup states work."
+description: "Outline of how Node Loading, Primary Startup, and graceful Node Shutdown works."
 ---
 
-# Node Loading & Primary Startup Process
+# Node Loading, Primary Startup, & Node Shutdown
 
 ## Health: From Loading To Healthy
 
@@ -59,3 +59,25 @@ For safety, before an elected Primary becomes `Active` it enters the `Starting` 
   - As part of syncing to object storage it should also perform replication to other Replicas and watchers to ensure they also received the records. Replicas which already have copies will ignore the relayed records, and those which do not will write to their SQLite DBs and send to their watchers.
 
 3. Sets `committed_revision` to its latest revision. All records on the new Primary are now authoritative — including any tentative records from the previous Primary's rolled-back transactions, which are adopted as committed under the new leadership. This `committed_revision` is pushed to all Replicas, allowing them to serve reads up to this point and to overwrite any tentative records above their own previous `committed_revision` that conflict with the new Primary's data.
+
+## Graceful Shutdown (Signal Handling)
+
+When a Netsy process receives a termination signal (e.g. `SIGTERM`, `SIGINT`), the shutdown procedure differs depending on whether the Node is a Primary or a Replica.
+
+The key difference is the Primary must flush all buffered data to object storage before deregistering, to ensure no committed records are lost. A Replica has no buffered writes and can deregister immediately.
+
+### Replica Shutdown
+
+1. Move Health State to `Degraded`.
+2. Deregister with the current Elector and delete its registration file from object storage (per [Node Deregistration](leader-election.md#node-deregistration)).
+3. Close any open gRPC connections (replication stream to Primary, Heartbeat connection to Elector).
+4. Exit.
+
+### Primary Shutdown
+
+1. Move Primary State to `Draining`. The Primary stops accepting new writes immediately.
+2. Flush the Chunk Buffer to object storage — all buffered records must be written to object storage before proceeding.
+3. Move Health State to `Degraded`.
+4. Deregister with the current Elector and delete its registration file from object storage (per [Node Deregistration](leader-election.md#node-deregistration)).
+5. Close any open gRPC connections.
+6. Exit.

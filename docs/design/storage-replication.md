@@ -12,6 +12,14 @@ To achieve this, Netsy aims to use object storage as the system-of-record. Howev
 
 If Netsy has enough Healthy Replicas to meet the configured quorum threshold, the Primary will commit a transaction once those Replicas have acknowledged receipt of the data, otherwise it will fallback to synchronous writes to object storage - and Netsy automatically tracks and adjusts the approach based on the Health State of all Nodes in a Cluster to make it straightforward for the operator and to minimise the chance of data loss.
 
+## Object Storage Write Model
+
+Records uploaded to object storage are first stored in Chunk files, and later compacted into Snapshot files (at which point the Chunk files are removed). See [Netsy Data Files](data-files.md) for the file format specification.
+
+For asynchronous object storage writes (Quorum Transactions), records are accumulated in a Chunk Buffer in memory before being flushed as a single Chunk File upload. This amortises the cost of object storage writes across multiple records. The Chunk Buffer is flushed when it reaches a size threshold, after a time interval, or immediately when the Primary transitions to `Draining`. If the Chunk Buffer is full and cannot be flushed, the Primary transitions to `Draining`.
+
+For synchronous object storage writes (Object Storage Transactions), each record is written as an individual Chunk File upload immediately — the Chunk Buffer is not used.
+
 ## The Lifecycle of Transactions
 
 To keep the implementation logic simple, during a transaction, there are two code paths which can be followed.
@@ -28,13 +36,17 @@ To determine which to follow for any given transaction, the Netsy Primary keeps 
 2. Parse request, assign revision
 3. Begin SQLite transaction
 4. Insert record into SQLite (not committed)
-5. Write chunk and flush to S3 (synchronous)
-6. S3 fails -> rollback, return error to client
-7. S3 succeeds -> commit SQLite transaction
-8. Increment Revision counter, advance `committed_revision`
-9. Send record to any connected Replicas asynchronously
-    - note: asynchronously means do not wait for ACK, though it is still tracked for health
-10. Respond to client
+5. Write chunk and flush to S3 (synchronous). If the upload fails, it is retried once immediately.
+6. S3 fails after retry -> rollback SQLite transaction, return error to client.
+        - The Primary transitions to `Draining` and stops accepting new writes. The failed upload continues to be retried with exponential backoff. Once the upload succeeds, the Primary gives up leadership and restarts as a Replica (per normal Draining behavior), allowing a fresh Primary election.
+
+   OR
+   S3 succeeds (first attempt or retry) -> commit SQLite transaction.
+        - Increment Revision counter, advance `committed_revision`
+        - Send record to any connected Replicas asynchronously
+            - note: asynchronously means do not wait for ACK, though it is still tracked for health
+
+7. Respond to client
 
 ### 2. Quorum Transaction Logic
 
