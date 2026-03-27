@@ -22,8 +22,8 @@ The file is written using the [google.golang.org/protobuf/encoding/protodelim](h
 
 ## CRCs
 
-We use CRC64 to protect against accidental corruption like bit rot, network errors, S3 silent failures.
-It does not defend against malicious tampering of S3 objects
+We use CRC64 to protect against accidental corruption like bit rot, network errors, object storage silent failures.
+It does not defend against malicious tampering of object storage objects
 
 CRC64 advantages:
 
@@ -47,5 +47,5 @@ All-Records CRC protects against:
    * Missing records: All individual CRCs valid, but records 500-600 disappeared
    * Duplicated records: Record 123 appears twice (both have valid CRCs)
    * Reordered records: All CRCs valid but revision sequence scrambled
-   * Truncated files: Partial S3 download, missing last 1000 records
+   * Truncated files: Partial object storage download, missing last 1000 records
    * Header/footer corruption: Per-record CRCs don't protect metadata

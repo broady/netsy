@@ -18,7 +18,7 @@ Due to the replication model used by Netsy, there is a strict requirement when e
 
 - __Disabled quorum__ (`0`): the Elector does not need to contact other Nodes, since all writes are synchronous to object storage and no Node can hold un-synced data. The Elector can elect from Nodes it already knows about via recent Heartbeat data, selecting the one with the highest known revision.
 - __Static quorum__ (positive integer): the Elector must contact all registered Nodes. Since a static quorum may be less than a majority, a committed record could exist on a minority of Replicas. The Elector must verify all Nodes to find the one with the highest revision. Leader election will block until all Nodes are contactable, or until unavailable Nodes are deregistered.
-- __Majority quorum__ (`-1`): the Elector only needs to contact a majority of registered Nodes (`floor(N/2) + 1` where N is the total number of registered Nodes). This is safe because majority quorum guarantees that any committed write was ACK'd by a majority, and any other majority must overlap with at least one Node that has that write.
+- __Majority quorum__ (`-1`): the Elector only needs to contact a majority of registered Nodes (`floor(N/2) + 1` where N is the total number of registered Nodes). This is safe because majority quorum guarantees that any committed write was receipted by a majority, and any other majority must overlap with at least one Node that has that write.
 
 While etcd handles this using raft, Netsy does not use consensus: instead, it uses a two-tier leader election system, allowing the audit process to more efficiently run on a single Node known as the Elector.
 
@@ -42,8 +42,8 @@ When a Node becomes an Elector, it stores a map of Nodes and their addresses in-
 
 When a Node is being removed from the Cluster (e.g. scaling down, maintenance, or graceful shutdown), it must deregister itself to prevent stale entries from blocking leader election:
 
-1. The Node moves its Health State to `Degraded`.
-2. If the Node is the Primary, it moves its Primary State to `Draining` and waits until all buffered records are flushed to object storage.
+1. If the Node is the Primary, it moves its Primary State to `Draining` and waits until all buffered records are flushed to object storage.
+2. The Node moves its Health State to `Degraded`.
 3. The Node deregisters with the current Elector directly (removing itself from the Elector's in-memory Node map).
 4. The Node deletes its registration file from object storage (under the `nodes/` prefix).
 
@@ -51,21 +51,21 @@ The Elector must also handle stale registrations: if a registered Node has misse
 
 ## Heartbeat Mechanism
 
-Each Node sends a Heartbeat to the Elector on a regular cadence. The Heartbeat contains the Node's current Health State, Primary State, and latest Revision. A Heartbeat is also embedded in every ACK sent to the Primary, sharing the same message structure, so the server-side processing of an ACK triggers the same code path as receiving a standalone Heartbeat.
+Each Node sends a Heartbeat to the Elector on a regular cadence. The Heartbeat contains the Node's current Health State, Primary State, and latest Revision. A Heartbeat is also embedded in every Receipt sent to the Primary, sharing the same message structure, so the server-side processing of a Receipt triggers the same code path as receiving a standalone Heartbeat.
 
 Each Node is aware of both the current Elector and Primary Node IDs. The Node uses this to determine when to send Heartbeats:
 
 - __To the Elector__: a Heartbeat is always sent on a regular cadence.
-- __To the Primary__: a Heartbeat is only sent if no ACK has been sent within the cadence/timeout, since every ACK already contains a Heartbeat.
-- __When the Elector and Primary are the same Node__: the Node only needs to send a single Heartbeat (or ACK) to that Node. If ACKs are being sent frequently enough, no standalone Heartbeats are needed at all.
+- __To the Primary__: a Heartbeat is only sent if no Receipt has been sent within the cadence/timeout, since every Receipt already contains a Heartbeat.
+- __When the Elector and Primary are the same Node__: the Node only needs to send a single Heartbeat (or Receipt) to that Node. If Receipts are being sent frequently enough, no standalone Heartbeats are needed at all.
 
-This design means the Elector and Primary use the same server-side code path for processing Heartbeats, whether they arrive as standalone Heartbeats or embedded in ACKs.
+This design means the Elector and Primary use the same server-side code path for processing Heartbeats, whether they arrive as standalone Heartbeats or embedded in Receipts.
 
 ### Heartbeat-Based Degradation
 
-The Elector and Primary both mark a Node as `Degraded` if it has missed 2 consecutive Heartbeats. Likewise, a Node must mark itself as `Degraded` if it has failed to successfully send an ACK or a Heartbeat after 1 immediate retry.
+The Elector and Primary both mark a Node as `Degraded` if it has missed 2 consecutive Heartbeats. Likewise, a Node must mark itself as `Degraded` if it has failed to successfully send a Receipt or a Heartbeat after 1 immediate retry.
 
-When the Primary marks a Node as `Degraded`, it will then stop counting that Replica as healthy for quorum, and if the healthy Replica count drops below 2, the Primary falls back to synchronous object storage writes. This ensures that any committed writes are durably stored in S3 before the client receives a response, and no partitioned Replica can hold un-synced data that is not also in object storage.
+When the Primary marks a Node as `Degraded`, it will then stop counting that Replica as healthy for quorum, and if the healthy Replica count drops below the configured quorum threshold, the Primary falls back to synchronous object storage writes. This ensures that any committed writes are durably stored in S3 before the client receives a response, and no partitioned Replica can hold un-synced data that is not also in object storage.
 
 ## Elector Leader Election
 
@@ -79,7 +79,7 @@ If the Elector determines no Primary exists (either via a failed health check, o
 
    - __Static quorum__ (positive integer): all registered Nodes must be contacted. Since a static quorum may be less than a majority, the Elector cannot safely exclude any Node — a committed record may only exist on a minority of Replicas. Leader election will block until all Nodes respond, or until unavailable Nodes are deregistered.
 
-   - __Majority quorum__ (`-1`): a majority of registered Nodes (`floor(N/2) + 1`) must be successfully contacted. Fail leader election if fewer than a majority respond. This is safe because any committed quorum write was ACK'd by a majority of Nodes, so any majority the Elector contacts must include at least one Node with the latest data.
+   - __Majority quorum__ (`-1`): a majority of registered Nodes (`floor(N/2) + 1`) must be successfully contacted. Fail leader election if fewer than a majority respond. This is safe because any committed quorum write was receipted by a majority of Nodes, so any majority the Elector contacts must include at least one Node with the latest data.
 
 3. Exit leader election and save the Primary to local memory if a single Node has the `Active` Primary State.
 
@@ -87,7 +87,7 @@ If the Elector determines no Primary exists (either via a failed health check, o
 
    - This prevents a new Primary being elected while the existing Primary is `Starting`, `Active`, or `Draining`.
 
-   - Degraded Nodes (other than the previous Primary, which is handled in step 1) are excluded from this check. Because a Node that cannot reach the Elector self-degrades and communicates this to the Primary (causing a fallback to synchronous S3 writes), a Degraded Node cannot hold un-synced data that is not already in object storage. This makes it safe to proceed with leader election without contacting Degraded Nodes.
+   - Degraded Nodes (other than the previous Primary, which is handled in step 1) are excluded from this check. Because a Node that cannot reach the Elector self-degrades and communicates this to the Primary (causing a fallback to synchronous S3 writes), a Degraded Node cannot hold un-synced data that is not already in object storage. This makes it safe to proceed with leader election without checking a Degraded Node's Primary State. Note that for __static quorum__, step 2 still requires all registered Nodes to be contactable — this exclusion only applies to the Primary State check, not the contactability requirement.
 
    - For planned Node removal, see [Node Deregistration](#node-deregistration).
 
@@ -109,7 +109,7 @@ Once an Elector is newly elected and has loaded its Service Discovery map, it ca
 
 - Cluster State includes the current Elector and current Primary.
 
-- Node State is received by the Elector from each Node via Heartbeats (sent on a regular cadence, and embedded in every ACK sent to the Primary). This includes the Node's current Health State, current Primary State, and latest Revision.
+- Node State is received by the Elector from each Node via Heartbeats (sent on a regular cadence, and embedded in every Receipt sent to the Primary). This includes the Node's current Health State, current Primary State, and latest Revision.
 
 This approach is taken to propagate Cluster State as fast as possible.
 
@@ -128,9 +128,9 @@ Once Replicas receives Cluster State indicating there is a new Primary elected, 
 This stream is used to:
 
 1. Receive new Records from the Primary
-2. ACK a new Record has been committed by the Replica (every ACK embeds a Heartbeat message containing the Node's current state)
-3. Send a standalone Heartbeat if no ACK has been sent within the heartbeat cadence/timeout
+2. Send a Receipt confirming a new Record has been committed by the Replica (every Receipt embeds a Heartbeat message containing the Node's current state)
+3. Send a standalone Heartbeat if no Receipt has been sent within the heartbeat cadence/timeout
 
-The Primary processes ACK Heartbeats and standalone Heartbeats using the same code path, since both contain identical Node State information (Health State, Primary State, latest Revision).
+The Primary processes Receipt-embedded Heartbeats and standalone Heartbeats using the same code path, since both contain identical Node State information (Health State, Primary State, latest Revision).
 
 More details about the protocol are covered under [Object Storage & Multi-Node Replication](storage-replication.md).

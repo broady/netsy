@@ -26,7 +26,7 @@ When a Netsy process starts, it enters the `Loading` Health State and performs a
 
 4. If the SQLite database `records` table is empty, downloads and imports the latest Snapshot file from object storage (if one exists).
 
-   - While it might be possible to retrieve this data from another Peer at a lower cost, by fetching it from object storage it ensures that it is receiving the most up-to-date source-of-truth data, and does so without causing any load on other Peers. This means you can safely bring multiple new Peers online quickly.
+   - While it might be possible to retrieve this data from another Peer at a lower cost, fetching from object storage provides a durable baseline without causing any load on other Peers. When using synchronous object storage transactions, it's the system of record. When using quorum transactions, object storage may not contain the very latest records (as they are flushed asynchronously). Regardless, it is always checked first as the starting point for backfill. This means you can safely bring multiple new Peers online quickly.
 
 5. Connects to the current Elector (if exists) to determine the current Primary (if exists).
 
@@ -56,9 +56,11 @@ For safety, before an elected Primary becomes `Active` it enters the `Starting` 
 
   - This is because if a KV Data record has been replicated to the newly elected Primary but was not yet written to object storage by the previous Primary, the new Primary will have data not yet synced to object storage.
 
-  - As part of syncing to object storage it should also perform replication to other Replicas and watchers to ensure they also received the records. Replicas which already have copies will ignore the relayed records, and those which do not will write to their SQLite DBs and send to their watchers.
+  - As part of syncing to object storage it should also perform replication to other Replicas to ensure they also received the records. Replicas which already have copies will ignore the relayed records, and those which do not will write to their SQLite DBs. Watch events for these records are not delivered until `committed_revision` is advanced in step 3.
 
 3. Sets `committed_revision` to its latest revision. All records on the new Primary are now authoritative — including any tentative records from the previous Primary's rolled-back transactions, which are adopted as committed under the new leadership. This `committed_revision` is pushed to all Replicas, allowing them to serve reads up to this point and to overwrite any tentative records above their own previous `committed_revision` that conflict with the new Primary's data.
+
+Once all preflight checks complete successfully, the Primary transitions from `Starting` to `Active` and begins accepting writes.
 
 ## Graceful Shutdown (Signal Handling)
 

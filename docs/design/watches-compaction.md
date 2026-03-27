@@ -10,7 +10,8 @@ description: "Watch support & Compaction system design"
 
 Note the distinction between a Watch and a Watcher:
 
-- __Watch__: a long-lived subscription to key/key-range changes that streams ordered updates (puts/deletes) in real time as they occur.
+- __Watch__: a long-lived subscription to key/key-range changes that streams ordered updates (puts/deletes) in real time as they are committed.
+    - Watch events are only delivered for Records at or below the `committed_revision` — tentative Records above the `committed_revision` are never visible to Watchers.
 - __Watcher__: a process connected to the etcd API with one or more __Watch__.
 
 All Netsy __Nodes__ can have a set of independent __Watchers__ with multiple __Watches__.
@@ -56,7 +57,7 @@ Once the Compaction Revision has been identified, if it is greater than the prev
 
 __Nodes__ must then enqueue an async compaction task, where it simply sets the compacted_at timestamp and value to NULL for any record not already compacted with a revision number lower than the compacted_revision. Note that unlike etcd, Netsy does not remove the record entirely, only the value blob.
 
-## Compaction & Snapshops
+## Compaction & Snapshots
 
 Because of the design of this compaction mechanism, all future snapshots created will be effectively compacted - retaining a full history of revisions, but without the overhead of (often large) values. No new records/chunks will be produced as a result of the process.
 
