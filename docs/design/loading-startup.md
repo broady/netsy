@@ -57,3 +57,5 @@ For safety, before an elected Primary becomes `Active` it enters the `Starting` 
   - This is because if a KV Data record has been replicated to the newly elected Primary but was not yet written to object storage by the previous Primary, the new Primary will have data not yet synced to object storage.
 
   - As part of syncing to object storage it should also perform replication to other Replicas and watchers to ensure they also received the records. Replicas which already have copies will ignore the relayed records, and those which do not will write to their SQLite DBs and send to their watchers.
+
+3. Sets `committed_revision` to its latest revision. All records on the new Primary are now authoritative — including any tentative records from the previous Primary's rolled-back transactions, which are adopted as committed under the new leadership. This `committed_revision` is pushed to all Replicas, allowing them to serve reads up to this point and to overwrite any tentative records above their own previous `committed_revision` that conflict with the new Primary's data.

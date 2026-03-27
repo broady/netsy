@@ -31,7 +31,7 @@ To determine which to follow for any given transaction, the Netsy Primary keeps 
 5. Write chunk and flush to S3 (synchronous)
 6. S3 fails -> rollback, return error to client
 7. S3 succeeds -> commit SQLite transaction
-8. Increment revision counter
+8. Increment Revision counter, advance `committed_revision`
 9. Send record to any connected Replicas asynchronously
     - note: asynchronously means do not wait for ACK, though it is still tracked for health
 10. Respond to client
@@ -47,15 +47,19 @@ To determine which to follow for any given transaction, the Netsy Primary keeps 
     - note: "durable ACK" means the Replica has committed the record to its own SQLite database (with `synchronous=FULL`, ensuring fsync to disk) before sending the ACK. See [Requirements](overview.md#requirements) for SQLite durability configuration.
 7. Quorum threshold acks received:
     - Commit SQLite transaction
-    - Increment revision counter
+    - Increment Revision counter
+    - Advance `committed_revision` to this Revision
     - Buffer record for async S3 write
+    - Send updated `committed_revision` to Replicas on the replication stream (before responding to the client, so Replicas can serve the record immediately upon client read-after-write)
     - Respond to client
 8. Timeout / insufficient acks:
     - Mark timed-out Replicas as unhealthy
     - Rollback SQLite transaction (the failed record is discarded and will not be included in any subsequent S3 flush)
+    - `committed_revision` is NOT advanced — Replicas that stored this record treat it as tentative and will not serve it to clients
     - Immediately trigger buffer flush to S3 of any previously buffered records (separate goroutine)
     - Return error to client
     - Client retries -> Primary now sees insufficient healthy Replicas for quorum -> follows Path 1
+    - When the client retries via Path 1 (sync S3), the same revision number is reused. Replicas that stored the tentative record will overwrite it when they receive the new record from the Primary, since records above `committed_revision` can be overwritten
 
 ### Switching Between Paths
 

@@ -19,6 +19,8 @@ description: "Overview of Netsy terminology, requirements, leader election, and 
 - __Elector__: the Cluster Node responsible for leader election of the Primary. Can be the same Node as the Primary or a Replica.
 - __Heartbeat__: a message sent by a Node to the Elector and/or Primary containing its current Node State (Health State, Primary State, and latest Revision).
 - __ACK__: an acknowledgement message sent by a Replica to the Primary confirming that a Record has been durably committed to the Replica's local SQLite database. Every ACK embeds a Heartbeat.
+- __Revision__: a monotonically increasing integer assigned by the Primary to each Record. Every write operation (create, update, delete) produces a new Record at the next revision number.
+- __Committed Revision__: the highest Revision that has been confirmed committed by the Primary (quorum met or written to S3).
 - __Watch__: a long-lived subscription to key/key-range changes that streams ordered updates (puts/deletes) in real time as they occur.
 - __Bind Address__: a host+port string used for binding a gRPC server to a given IP or hostname and port e.g. `0.0.0.0:2378`
 - __Advertise Address__: a host+port string used for a Client or Peer to connect to the Node or Cluster e.g. `172.16.0.1:2378` or `etcd.example.com:2378`
@@ -70,12 +72,14 @@ Each __Node__ has three state fields which can be read via the __Peer__ API:
     - `PRAGMA journal_mode=WAL` — WAL (Write-Ahead Logging) for concurrent read/write performance. Must be set once when the database is opened.
     - `PRAGMA synchronous=FULL` — ensures WAL writes are fsynced to disk before reporting commit success. This is critical: without it, a crash after commit but before fsync could lose data that was already ACK'd.
 - __Replicas__ can answer range (read) requests directly, but proxy any transaction (write) requests to the __Primary__.
+    - Replicas must only serve records up to the `committed_revision` received from the Primary. Records above this revision are tentative (from in-progress or rolled-back transactions) and must not be visible to clients.
     - If a __Replica__ Health State is `Degraded`, it must continue to serve range (read) requests, which may return stale data. If stricter read consistency guarantees are required in the future, a Replica in `Degraded` state may instead reject or proxy read requests.
     - By its nature the __Primary__ cannot be in a `Degraded` state.
 - Each __Node__ has an unencrypted HTTP endpoint `/health` for health-checking the Netsy process, with health determined by the Health State, which can be used by systems like Kubernetes or ASGs for health-checking the process.
 - The __Primary__ writes data to its SQLite database, object storage, and all __Replicas__.
     - In a __Cluster__ without enough `Healthy` __Replicas__ to meet the configured quorum threshold, writes are synchronous to the object storage bucket, and therefore it is the canonical system-of-record.
     - Where there are enough `Healthy` __Replicas__ to meet the quorum threshold, a transaction can be committed when those __Replicas__ acknowledge recording the data, and writes to object storage are asynchronous/buffered. See [Quorum Configuration](./storage-replication.md#quorum-configuration) for details.
+    - The __Primary__ sends the current __Committed Revision__ to __Replicas__ alongside __Records__ and in __Heartbeats__. Records above the __Committed Revision__ are tentative and, if a rollback occurs, will be overwritten by a new transaction from the same __Primary__.
     - Data is sent to __Replicas__ via gRPC streams, and is stored in object storage using a custom [Netsy Data File](./data-files.md) format.
     - __Replicas__ must not accept data from the __Primary__ unless its Primary State is not `Replica` (must be `Starting`, `Active`, or `Draining`).
     - The __Primary__ must accept connections from __Replicas__ when its Primary State is `Starting`, `Active`, or `Draining`.
