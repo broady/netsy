@@ -26,6 +26,7 @@ description: "Overview of Netsy terminology, requirements, leader election, and 
 - __Bind Address__: a host+port string used for binding a gRPC server to a given IP or hostname and port e.g. `0.0.0.0:2378`
 - __Advertise Address__: a host+port string used for a Client or Peer to connect to the Node or Cluster e.g. `172.16.0.1:2378` or `etcd.example.com:2378`
 - __Service Discovery__: how each Node learns about all other Nodes in a Cluster, including their Advertise addresses for Peer connections.
+- __Member ID__: a stable numeric etcd-compatible member identifier assigned by the Elector and stored in object storage separately from active Node registrations.
 
 ## Cluster State
 
@@ -88,15 +89,17 @@ Each __Node__ has three state fields which can be read via the __Peer__ API:
     - Determining which __Node__ is the __Elector__ uses a separate leader election process to the one which determines which __Node__ is the __Primary__. This may be referred to as a two-tier/dual-layer leader election system: one for the etcd writer/Primary role, one for the Elector role.
     - This two-tier approach is used because an audit must be conducted during leader election of the __Primary__ to ensure whichever __Replica__ is elected has the current latest-known etcd revision number, to prevent data loss.
     - The __Elector__ leader election process uses [s3lect](https://s3lect.dev) and uses object storage for coordination, whereas the __Primary__ leader election process is handled by the __Elector__ itself.
-- Mutual TLS (mTLS) is used for authentication of any __Client__ or __Peer__ connecting to a __Node__ gRPC server.
+- Mutual TLS (mTLS) is used for authenticating/authorising connections to __Node__ gRPC servers.
+    - All TLS certificates in a __Cluster__ share a single CA.
+    - __Peer__ certificates must contain `OU=peer`, `CN=node_id`, and `O=cluster_id`. Node ID's are embedded into client ceritifcates to prevent impersonation.
+    - __Client__ certificates must contain `OU=client`, `CN=client_id`, and `O=cluster_id`.
+    - During the authentication flow, the server verifies `O` matches its own Cluster ID, preventing cross-cluster connections if a CA is re-used across clusters.
 - Each __Node__ has:
-   - A server TLS certificate used on the __Client__ and __Peer__ gRPC servers.
-   - A client TLS certificate used for connecting to other __Peer__ gRPC servers.
-   - Its "Node ID" embedded in its server and client TLS certificate to prevent impersonation.
-   - A "Cluster ID" embedded in the Organization (O) field of its TLS certificates. During mTLS authentication, each __Node__ verifies the peer's Organization matches its own, preventing cross-cluster connections when a shared CA is used.
-   - A single CA used for all TLS certificates in the __Cluster__.
-   - A __Bind__ address and an __Advertise__ address for __Client__ Node/Cluster connections and __Peer__ Node connections.
-- For __Service Discovery__, each __Node__ registers itself as a member of the cluster by writing to a file in object storage under a known prefix for registration. The __Elector__ can then list files under that prefix to identify all __Nodes__ in the cluster.
+    - A server certificate (used on __Client__ and __Peer__ gRPC servers) and a client certificate (used for outbound __Peer__ connections).
+    - The `CN` (Node ID) is validated during loading/startup to ensure it matches the Node configuration.
+    - A __Bind__ address and an __Advertise__ address for __Client__ Node/Cluster connections and __Peer__ Node connections.
+- For __Service Discovery__, each __Node__ registers itself by writing a file in object storage under the `nodes/` prefix containing its Advertise addresses.
+    - The __Elector__ also maintains a durable `members.json` file containing the Cluster ID and stable etcd `member_id -> node_id` mappings used for cluster topology APIs such as `MemberList`.
 
 ## Further Reading
 
@@ -106,3 +109,4 @@ Each __Node__ has three state fields which can be read via the __Peer__ API:
 - [Loading, Startup, & Shutdown](loading-startup.md) - Outline of how Node Loading, Primary Startup, and graceful Node Shutdown works.
 - [Failure Scenarios](failure-scenarios.md) – Data integrity and safety analysis across quorum configurations and cluster sizes.
 - [Watches & Compaction](watches-compaction.md) – Watch support & Compaction system design.
+- [Compatibility With etcd](etcd-compatibility.md) – Supported etcd RPCs, unsupported RPCs, and notes on compatibility differences.

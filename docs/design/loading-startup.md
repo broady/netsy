@@ -16,7 +16,7 @@ When a Netsy process starts, it enters the `Loading` Health State and performs a
 
     - Step 1: ensure a Node file exists in object storage.
 
-    - Step 2: connect to the current Elector (if exists) and register itself with the Elector.
+    - Step 2: connect to the current Elector (if exists) and register itself with the Elector, which allocates or re-uses the Node's stable etcd `member_id` in `members.json`.
 
 3. Initialise its SQLite database.
 

@@ -13,3 +13,4 @@ description: "Netsy concepts and system design for data files, multi-node/replic
 - [Loading, Startup, & Shutdown](loading-startup.md) - Outline of how Node Loading, Primary Startup, and graceful Node Shutdown works.
 - [Failure Scenarios](failure-scenarios.md) – Data integrity and safety analysis across quorum configurations and cluster sizes.
 - [Watches & Compaction](watches-compaction.md) – Watch support & Compaction system design.
+- [Compatibility With etcd](etcd-compatibility.md) – Supported etcd RPCs, unsupported RPCs, and notes on compatibility differences.

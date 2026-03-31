@@ -87,14 +87,15 @@ Path 2 -> Path 1:
 
 The quorum threshold is configurable and determines the number of Replica Receipts required before a transaction can be committed without a synchronous object storage write.
 
-The configuration value represents the number of Replica Receipts needed (the Primary's own copy does not count towards satisfying this number):
+For a positive integer quorum, the configuration value represents the exact number of Replica Receipts needed. For majority quorum (`-1`), the Primary's own durable SQLite commit counts as one participant toward the majority, so the required Replica Receipts are derived from the total registered Nodes including the Primary.
 
-- __`-1`__ (default): dynamically calculate the quorum as a raft-style majority based on the number of registered Nodes: `floor(N/2) + 1` Replica Receipts needed, where N is the total number of registered Nodes (including the Primary). This mirrors raft's majority requirement — any two majorities of N must overlap, guaranteeing the Elector can always find the latest data during leader election. For example:
-  - 7 registered Nodes -> 4 Replica Receipts needed
-  - 5 registered Nodes -> 3 Replica Receipts needed
-  - 4 registered Nodes -> 3 Replica Receipts needed
-  - 3 registered Nodes -> 2 Replica Receipts needed
-  - If the total registered Nodes drops below 3, the calculated threshold equals or exceeds the number of available Replicas (e.g. 2 Nodes -> 2 Receipts needed but only 1 Replica exists), so the Primary will always fall back to synchronous object storage writes. This effectively behaves the same as disabled quorum (`0`).
+- __`-1`__ (default): dynamically calculate the quorum as a raft-style majority based on the number of registered Nodes: `floor(N/2)` Replica Receipts needed, where N is the total number of registered Nodes (including the Primary). This means the Primary's own durable SQLite commit counts as one durable participant in the majority, while any two majorities of N still overlap and allow the Elector to find the latest data during leader election. For example:
+  - 7 registered Nodes -> 3 Replica Receipts needed
+  - 5 registered Nodes -> 2 Replica Receipts needed
+  - 4 registered Nodes -> 2 Replica Receipts needed
+  - 3 registered Nodes -> 1 Replica Receipt needed
+  - 2 registered Nodes -> 1 Replica Receipt needed
+  - A single-node cluster has no Replica to receipt, so the Primary follows synchronous Object Storage Transactions (Path 1)
 - __Positive integer__ (e.g. `2`): a static number of Replica Receipts required. This is similar to PostgreSQL's synchronous replication, optimised for performance in larger clusters where a full majority is not required. When using a static value less than a majority, the Elector must contact all registered Nodes during leader election (not just a majority) to ensure the Node with the highest revision can be found and elected. Leader election will block until all Nodes are contactable, or until unavailable Nodes are deregistered.
 - __`0`__: disable quorum transactions entirely. All writes use synchronous Object Storage Transactions (Path 1). Useful for single-node deployments or when latency is not a concern.
 

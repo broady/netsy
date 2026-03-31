@@ -6,9 +6,11 @@ description: "TLS certificate requirements and generation for Netsy clusters"
 
 # TLS Certificates
 
-Netsy uses mutual TLS (mTLS) for authentication between Clients, Peers, and Nodes.
+Netsy uses mutual TLS (mTLS) for authentication for Nodes, Peers, and Clients.
 
 Each Node requires a server certificate (for serving gRPC) and a client certificate (for Nodes connecting to Peers).
+
+Presented client certificates embed a role of either `peer` or `client`, and Netsy authorises the connection based on that role.
 
 ## Certificate Requirements
 
@@ -16,10 +18,18 @@ All TLS certificates in a Netsy cluster must be signed by the same Certificate A
 
 ### Identity Fields
 
-Each certificate embeds identity information that Netsy validates during mTLS authentication:
+Certificates used for peer-to-peer communication and client authentication embed identity and role information that Netsy validates during mTLS authentication:
 
-- **Common Name (CN)**: must match the `node_id` configured on the Node. This prevents impersonation of other Nodes.
-- **Organization (O)**: must match the `cluster_id` configured on the Node. This prevents Nodes from accidentally joining the wrong cluster, even if multiple clusters share the same CA.
+- **Organization (O)**: must match the `cluster_id` configured on the Node. This prevents Nodes and Clients from accidentally joining/connecting to the wrong cluster, even if multiple clusters share the same CA.
+- **Organizational Unit (OU)**: must be the Role, either `peer` or `client`
+  - `peer` certificates: identify a cluster Node and are used for Node-to-Node communication connecting to the Peer API.
+  - `client` certificates: identify an external "etcd client" connecting to the Client API.
+- **Common Name (CN)**: the identifier of the Peer/Client
+  - for Nodes, must match the `node_id` configured on the Node. This prevents impersonation of other Nodes.
+
+### Client API Client Certificates
+
+External "etcd clients" are not cluster Nodes. When a Client connects to the Client API with mTLS, Netsy verifies that the certificate chains to the configured CA and has the `client` role. Only `peer` certificates are required to match a Node's `node_id`.
 
 ### Validation Rules
 
@@ -31,18 +41,18 @@ Both `cluster_id` and `node_id` must be:
 
 ### Server Certificate
 
-Used on the Client API and Peer API gRPC servers. Must include:
+Used by a Node on the Client API and Peer API gRPC servers. Must include:
 
-- **Subject**: `O={cluster_id}, CN={node_id}`
+- **Subject**: `O={cluster_id}, OU=peer, CN={node_id}`
 - **Subject Alternative Names (SANs)**: all bind and advertise addresses for this Node (Client API, Peer API, and s3lect health server)
 - **Key Usage**: Digital Signature, Key Encipherment
 - **Extended Key Usage**: TLS Web Server Authentication
 
-### Client Certificate
+### Node Client Certificate
 
-Used when connecting to other Peer gRPC servers. Must include:
+Used by a Node when connecting to other Peer gRPC servers. Must include:
 
-- **Subject**: `O={cluster_id}, CN={node_id}`
+- **Subject**: `O={cluster_id}, OU=peer, CN={node_id}`
 - **Key Usage**: Digital Signature
 - **Extended Key Usage**: TLS Web Client Authentication
 
@@ -78,7 +88,7 @@ openssl req -x509 -new -nodes \
   -subj "/O=${CLUSTER_ID}/CN=${CLUSTER_ID}-ca"
 ```
 
-### 2. Generate the Server Certificate
+### 2. Generate the Node Server Certificate
 
 Create a config file for the server certificate SANs:
 
@@ -91,6 +101,7 @@ prompt = no
 
 [req_dn]
 O = ${CLUSTER_ID}
+OU = peer
 CN = ${NODE_ID}
 
 [v3_req]
@@ -129,7 +140,7 @@ openssl x509 -req \
   -extfile server.cnf
 ```
 
-### 3. Generate the Client Certificate
+### 3. Generate the Node Client Certificate
 
 Create a config file for the client certificate:
 
@@ -142,6 +153,7 @@ prompt = no
 
 [req_dn]
 O = ${CLUSTER_ID}
+OU = peer
 CN = ${NODE_ID}
 
 [v3_req]
@@ -179,11 +191,11 @@ Verify the subject fields and SANs are correct:
 ```bash
 # Check server certificate
 openssl x509 -in server.crt -noout -subject -ext subjectAltName
-# Expected: subject=O=my-cluster, CN=node-1
+# Expected: subject=O=my-cluster, OU=peer, CN=node-1
 
 # Check client certificate
 openssl x509 -in client.crt -noout -subject
-# Expected: subject=O=my-cluster, CN=node-1
+# Expected: subject=O=my-cluster, OU=peer, CN=node-1
 
 # Verify both are signed by the CA
 openssl verify -CAfile ca.crt server.crt

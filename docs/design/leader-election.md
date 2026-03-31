@@ -36,7 +36,9 @@ The Elector requires knowledge of all Nodes in its Cluster. The mechanism for re
 
 During the Node `Loading` Health State, Netsy ensures a JSON file is written to object storage for its Node ID, containing its Advertise address(es). The path used for this is `nodes/{node_id}.json`.
 
-When a Node becomes an Elector, it stores a map of Nodes and their addresses in-memory, populated immediately from object storage, and updated by each new Node registration directly once the Node becomes Elector (which can happen before the object storage backfill is completed). Until the initial load from object storage is complete, an Elector will not perform leader election for a new Primary.
+Separately, the Elector manages a durable `members.json` file containing the `cluster_id` and stable etcd `member_id -> node_id` mappings. This file is updated only by the Elector using object storage `If-Match` semantics during direct Node registration, allowing the same `node_id` to re-use its previous `member_id` after deregistration or restart.
+
+When a Node becomes an Elector, it stores a map of Nodes, their addresses, and their stable etcd `member_id` values in-memory, populated immediately from `members.json` and the active `nodes/` registration files in object storage, and updated by each new Node registration directly once the Node becomes Elector (which can happen before the object storage backfill is completed). Until the initial load from object storage is complete, an Elector will not perform leader election for a new Primary.
 
 ### Node Deregistration
 
@@ -45,9 +47,9 @@ When a Node is being removed from the Cluster (e.g. scaling down, maintenance, o
 1. If the Node is the Primary, it moves its Primary State to `Draining` and waits until all buffered records are flushed to object storage.
 2. The Node moves its Health State to `Degraded`.
 3. The Node deregisters with the current Elector directly (removing itself from the Elector's in-memory Node map).
-4. The Node deletes its registration file from object storage (under the `nodes/` prefix).
+4. The Node deletes its registration file from object storage (under the `nodes/` prefix). Its durable `member_id` mapping remains in `members.json` for future re-registration.
 
-The Elector must also handle stale registrations: if a registered Node has missed Heartbeats and is marked `Degraded` by the Elector, it is excluded from leader election but remains in the Node map. If a Node remains Degraded for longer than the `node_deregistration_timeout` (default: 3 minutes), the Elector automatically deregisters it by removing it from the in-memory Node map and deleting its registration file from object storage. Setting this to `0` disables automatic deregistration, requiring an operator to manually deregister unavailable Nodes. This is safe because a Degraded Node has already caused the Primary to potentially fall back to synchronous S3 writes, so no un-synced data can be lost. If the Node later recovers, it will re-register during its `Loading` process. This is particularly important for majority quorum (`-1`), where stale registrations inflate the registered Node count and raise the majority threshold unnecessarily.
+The Elector must also handle stale registrations: if a registered Node has missed Heartbeats and is marked `Degraded` by the Elector, it is excluded from leader election but remains in the Node map. If a Node remains Degraded for longer than the `elector.deregistration_timeout` (default: 3 minutes), the Elector automatically deregisters it by removing it from the in-memory Node map and deleting its registration file from object storage. Setting this to `0` disables automatic deregistration, requiring an operator to manually deregister unavailable Nodes. This is safe because a Degraded Node has already caused the Primary to potentially fall back to synchronous S3 writes, so no un-synced data can be lost. If the Node later recovers, it will re-register during its `Loading` process. This is particularly important for majority quorum (`-1`), where stale registrations inflate the registered Node count and raise the majority threshold unnecessarily.
 
 ## Heartbeat Mechanism
 

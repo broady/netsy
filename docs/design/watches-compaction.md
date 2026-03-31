@@ -53,7 +53,7 @@ Once the Compaction Revision has been identified, if it is greater than the prev
 
 1. The __Primary__ will send a notice to every __Node__ that the new minmum revision will be this "compaction revision". Each __Node__ must confirm that no new __Watches__ exist with a lower revision, and upon confirming the __Node__ must block new __Watch__ requests for revisions less than the new lower revision. If any of the __Nodes__ fail to confirm, they are retried once, or otherwise the Compaction process exists until the next interval.
 
-2. It will then insert it the Compaction Revision into its `compactions` table and replicate the record out to all __Replicas__.
+2. It will then insert the Compaction Revision into its `compactions` table and replicate the record out to all __Replicas__. If a newly elected __Primary__ finds this table empty during preflight, it must seed it by inserting the Compaction Revision implied by existing `records` rows with `compacted_at` already set before accepting writes.
 
 __Nodes__ must then enqueue an async compaction task, where it simply sets the compacted_at timestamp and value to NULL for any record not already compacted with a revision number lower than the compacted_revision. Note that unlike etcd, Netsy does not remove the record entirely, only the value blob.
 
