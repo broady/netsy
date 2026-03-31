@@ -1,6 +1,6 @@
 ---
 title: "Systemd"
-weight: 10
+weight: 20
 description: "Example systemd unit file"
 ---
 

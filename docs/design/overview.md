@@ -10,8 +10,8 @@ description: "Overview of Netsy terminology, requirements, leader election, and 
 
 - __Record__: a single key-value data entry, also known as an "etcd record", which has a revision integer, key string, value blob, and other metadata. Unique on revision+key.
 - __KV Data__: the collection of Records, also known as "etcd records".
-- __Node__: a single Netsy process. Each node has an identifier or "Node ID".
-- __Cluster__: a collection of Nodes for a given KV Data store.
+- __Node__: a single Netsy process. Each node has an identifier or "Node ID". The Node ID must be lowercase alphanumeric characters and hyphens only, with no leading, trailing, or consecutive hyphens, and a maximum of 32 characters.
+- __Cluster__: a collection of Nodes for a given KV Data store. Each Cluster has a "Cluster ID" following the same naming/validation rules as Node ID.
 - __Primary__: the Cluster Node which handles all etcd transaction requests (write operations).
 - __Replica__: all Cluster Nodes except for the Primary. Must proxy any transaction request (write operation) to the Primary.
 - __Client__: a consumer of the etcd API subset in the Netsy API, also known as an "etcd client" e.g. `kube-apiserver` or `etcdctl`.
@@ -45,7 +45,7 @@ Each __Node__ has three state fields which can be read via the __Peer__ API:
 
     - `Healthy` when it has completed `Loading` and is not `Degraded`.
 
-    - `Degraded` when it has failed to send any Receipt or Heartbeat after 1 immediate retry (self-degraded), or when the Elector or Primary has detected 2 consecutive missed Heartbeats from the Node (Elector-degraded).
+    - `Degraded` when it has failed to send any Receipt or Heartbeat after 1 immediate retry (self-degraded), when the Elector or Primary has detected 2 consecutive missed Heartbeats from the Node (Elector-degraded), or when a Replica receives a `committed_revision` from the Primary that is higher than its own latest revision and has not caught up within 2 seconds.
 
     A Node should be considered "unhealthy" if it has been in the `Loading` or `Degraded` state after a timeout.
 
@@ -93,6 +93,7 @@ Each __Node__ has three state fields which can be read via the __Peer__ API:
    - A server TLS certificate used on the __Client__ and __Peer__ gRPC servers.
    - A client TLS certificate used for connecting to other __Peer__ gRPC servers.
    - Its "Node ID" embedded in its server and client TLS certificate to prevent impersonation.
+   - A "Cluster ID" embedded in the Organization (O) field of its TLS certificates. During mTLS authentication, each __Node__ verifies the peer's Organization matches its own, preventing cross-cluster connections when a shared CA is used.
    - A single CA used for all TLS certificates in the __Cluster__.
    - A __Bind__ address and an __Advertise__ address for __Client__ Node/Cluster connections and __Peer__ Node connections.
 - For __Service Discovery__, each __Node__ registers itself as a member of the cluster by writing to a file in object storage under a known prefix for registration. The __Elector__ can then list files under that prefix to identify all __Nodes__ in the cluster.

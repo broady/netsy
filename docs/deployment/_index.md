@@ -6,5 +6,7 @@ description: "Deploying and running Netsy"
 
 ## In This Section
 
+- [Configuration](config.md) – Configuration reference (environment variables and cluster config file)
+- [TLS](tls.md) – TLS certificate requirements and generation for Netsy clusters
 - [Systemd](systemd.md) – Example systemd unit file
 - [AWS](aws.md) – How to run Netsy on AWS

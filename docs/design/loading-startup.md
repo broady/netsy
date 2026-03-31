@@ -22,7 +22,7 @@ When a Netsy process starts, it enters the `Loading` Health State and performs a
 
     - If its SQLite database does not exist, create an initial schema.
 
-    - Run any unapplied schema migrations.
+    - Check `PRAGMA user_version` against the expected schema version. If different than expected, refuse to start (prevents an older release from using a database written by a newer release). If lower, a future release may migrate in-place or wipe and rebuild from object storage.
 
 4. If the SQLite database `records` table is empty, downloads and imports the latest Snapshot file from object storage (if one exists).
 

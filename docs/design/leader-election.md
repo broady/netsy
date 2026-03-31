@@ -34,7 +34,7 @@ Nodes can determine which Node is the Primary by querying the Elector.
 
 The Elector requires knowledge of all Nodes in its Cluster. The mechanism for registering and listing Nodes is referred to as Service Discovery.
 
-During the Node `Loading` Health State, Netsy ensures a file is written to object storage for its Node ID, containing its Advertise address(es). The prefix used for this is `nodes/`.
+During the Node `Loading` Health State, Netsy ensures a JSON file is written to object storage for its Node ID, containing its Advertise address(es). The path used for this is `nodes/{node_id}.json`.
 
 When a Node becomes an Elector, it stores a map of Nodes and their addresses in-memory, populated immediately from object storage, and updated by each new Node registration directly once the Node becomes Elector (which can happen before the object storage backfill is completed). Until the initial load from object storage is complete, an Elector will not perform leader election for a new Primary.
 
