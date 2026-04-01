@@ -31,7 +31,7 @@ Unless otherwise noted below:
 | Watch | `Watch` | Watch event delivery is gated by `committed_revision`, and watch admission is constrained by compaction state. |
 | Lease | `LeaseGrant` | `LeaseGrant` returns a synthetic response but does not implement real lease storage or expiry semantics. It should not be treated as etcd-compatible lease behavior. |
 | Cluster | `MemberList` | Non-Elector Nodes proxy to the Elector, which answers from its in-memory Node map using stable etcd `member_id`s from `members.json`. |
-| Maintenance | `Status` | `Status` is a local response: `leader` maps to the current Primary's stable etcd `member_id`, `db_size`/`db_size_in_use` come from local SQLite, `errors` reflect local Health State, and Raft-only fields stay static. |
+| Maintenance | `Status` | `Status` is a local response: `leader` maps to the current Primary's stable etcd `member_id` from current Cluster State, `db_size`/`db_size_in_use` come from local SQLite, `errors` reflect local Health State, and Raft-only fields stay static. |
 
 ## Unsupported RPCs
 
@@ -98,7 +98,7 @@ Netsy's `MemberList` is an etcd-compatible view of current cluster topology.
 
 `Status` is answered by the responding Node itself.
 
-- `leader` is the current Primary's stable etcd `member_id`.
+- `leader` is the current Primary's stable etcd `member_id` from current Cluster State.
 - `db_size` and `db_size_in_use` come from the responding Node's local SQLite database.
 - `errors` reflect the responding Node's local Health State.
 - `raft_index`, `raft_term`, and `raft_applied_index` stay `0`.

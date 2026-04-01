@@ -24,6 +24,10 @@ Each __Watcher__ and __Watch__ is tracked in-memory on each __Node__. Critically
 
 The __Peer__ API of each __Node__ exposes an endpoint whereby the global min(inimum) version for all of its __Watches__ can be queried by the __Primary__, which is critical information for Compaction.
 
+If a Node has no active Watches, it returns its current `committed_revision` as the minimum revision.
+
+Each Node also persists the latest accepted Compaction Revision locally. Restarting Replicas can also restore watch-admission gating from the Primary's `Initial` message on the `Follow` stream, without waiting for the next compaction cycle.
+
 ## What is Compaction?
 
 Compaction is the process of removing historical data from the __KV Data__ store.
@@ -51,9 +55,9 @@ To do this, it retrieves the global min revision of all __Watches__ for each __N
 
 Once the Compaction Revision has been identified, if it is greater than the previous Compaction Revision:
 
-1. The __Primary__ will send a notice to every __Node__ that the new minmum revision will be this "compaction revision". Each __Node__ must confirm that no new __Watches__ exist with a lower revision, and upon confirming the __Node__ must block new __Watch__ requests for revisions less than the new lower revision. If any of the __Nodes__ fail to confirm, they are retried once, or otherwise the Compaction process exists until the next interval.
+1. The __Primary__ will send a notice to every __Node__ that the new minmum revision will be this "compaction revision". Each __Node__ must confirm that no existing __Watches__ exist with a lower revision, and upon confirming the __Node__ must provisionally block new __Watch__ requests for revisions less than the new lower revision until the compaction round is either confirmed or aborted. If any of the __Nodes__ fail to confirm, they are retried once, or otherwise the Compaction process exits until the next interval and the provisional Watch admission block from this notice is released.
 
-2. It will then insert the Compaction Revision into its `compactions` table and replicate the record out to all __Replicas__. If a newly elected __Primary__ finds this table empty during preflight, it must seed it by inserting the Compaction Revision implied by existing `records` rows with `compacted_at` already set before accepting writes.
+2. Once the notice has been accepted cluster-wide, the __Primary__ sends a logical `Compact` message on `Follow` streams. On receiving that confirmation, each __Node__ persists the Compaction Revision into its local `compactions` table and keeps the watch-admission gate in place durably. If a restarting Node or a newly elected __Primary__ finds this table empty during startup or preflight, it must seed it from the Compaction Revision implied by contiguous existing `records` rows with `compacted_at` already set before accepting new Watches or writes.
 
 __Nodes__ must then enqueue an async compaction task, where it simply sets the compacted_at timestamp and value to NULL for any record not already compacted with a revision number lower than the compacted_revision. Note that unlike etcd, Netsy does not remove the record entirely, only the value blob.
 

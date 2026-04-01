@@ -1,6 +1,6 @@
 ---
 title: "Configuration"
-weight: 5
+weight: 10
 description: "Netsy configuration reference — environment variables and cluster config file"
 ---
 
@@ -32,7 +32,7 @@ Unique to each Node — identity, network addresses, TLS certificate paths, and 
 
 | Env Var | Default | Description |
 |---|---|---|
-| `NETSY_CONFIG` | — | Path to cluster config file (optional) |
+| `NETSY_CONFIG` | — | Path to cluster config file (required unless `--config` is specified) |
 | `NETSY_NODE_ID` | — | Node identifier (must match CN in TLS certificates) |
 | `NETSY_BIND_CLIENT` | `:2378` | Client API bind address |
 | `NETSY_ADVERTISE_CLIENT` | — | Client API advertise address |
@@ -51,7 +51,27 @@ Unique to each Node — identity, network addresses, TLS certificate paths, and 
 
 ## Per-Cluster Settings (config file)
 
-Identical across all Nodes — cluster identity, storage, behaviour, and thresholds. Set in a shared config file; env vars override if set.
+Identical across all Nodes — cluster identity, storage, behaviour, and thresholds. Set in a shared config file only.
+
+### Per-Node Address Example
+
+Use advertise addresses that other Nodes and Clients can actually dial.
+
+IPv4 example:
+
+```bash
+export NETSY_ADVERTISE_CLIENT="172.16.0.1:2378"
+export NETSY_ADVERTISE_PEER="172.16.0.1:2381"
+export NETSY_ADVERTISE_ELECTION="172.16.0.1:8443"
+```
+
+IPv6 example:
+
+```bash
+export NETSY_ADVERTISE_CLIENT="[2001:db8::10]:2378"
+export NETSY_ADVERTISE_PEER="[2001:db8::10]:2381"
+export NETSY_ADVERTISE_ELECTION="[2001:db8::10]:8443"
+```
 
 ### Config File Format
 
@@ -75,9 +95,9 @@ netsy --config /etc/netsy/config.jsonc
     "provider": "s3",       // "s3" or "gcs"
     "bucket_name": "my-netsy-bucket",
     "key_prefix": "",       // optional prefix for all object storage keys
-    "class": "STANDARD",    // S3 storage class (STANDARD, STANDARD_IA, etc.)
-    "encryption": "AES256"  // server-side encryption (AES256 or aws:kms)
-    // "kms_key_id": ""     // only needed when using aws:kms encryption
+    "class": "STANDARD",    // S3: STANDARD/STANDARD_IA/... ; GCS: STANDARD/NEARLINE/COLDLINE/ARCHIVE
+    "encryption": "provider-managed" // or "customer-managed"
+    // "kms_key_id": ""     // only needed when using customer-managed encryption
   },
 
   // Elector leader election and node lifecycle
@@ -112,6 +132,22 @@ netsy --config /etc/netsy/config.jsonc
 }
 ```
 
+GCS example:
+
+```jsonc
+{
+  "cluster_id": "my-cluster",
+  "storage": {
+    "provider": "gcs",
+    "bucket_name": "my-netsy-bucket",
+    "key_prefix": "",
+    "class": "STANDARD",
+    "encryption": "customer-managed",
+    "kms_key_id": "projects/my-project/locations/global/keyRings/netsy/cryptoKeys/main"
+  }
+}
+```
+
 ### Config File Reference
 
 | Config Key | Default | Description |
@@ -120,9 +156,9 @@ netsy --config /etc/netsy/config.jsonc
 | `storage.provider` | `s3` | Object storage provider (`s3` or `gcs`) |
 | `storage.bucket_name` | — | Object storage bucket name |
 | `storage.key_prefix` | — | Object storage key prefix |
-| `storage.class` | `STANDARD` | Storage class |
-| `storage.encryption` | `AES256` | Server-side encryption |
-| `storage.kms_key_id` | — | KMS key ID (when using aws:kms) |
+| `storage.class` | `STANDARD` | Provider-specific storage class |
+| `storage.encryption` | `provider-managed` | Encryption mode: `provider-managed` or `customer-managed` |
+| `storage.kms_key_id` | — | KMS key identifier/resource when using `customer-managed` encryption |
 | `elector.heartbeat_interval` | — | How often each Node sends a heartbeat to the Elector |
 | `elector.degradation_timeout` | — | 2 missed heartbeats within this window marks Node as Degraded |
 | `elector.deregistration_timeout` | `3m` | Auto-deregister Degraded nodes (`0` = disabled) |
@@ -139,7 +175,9 @@ netsy --config /etc/netsy/config.jsonc
 
 ### Object Storage Connectivity (env vars)
 
-Additional to the cluster-wide object storage configuration, per-provider SDK environment variables e.g. used when `storage_provider` is `s3`:
+Additional to the cluster-wide object storage configuration, provider SDK environment variables may be used.
+
+#### S3 / AWS
 
 | Env Var | Default | Description |
 |---|---|---|
@@ -151,3 +189,18 @@ Additional to the cluster-wide object storage configuration, per-provider SDK en
 | `AWS_ROLE_ARN` | — | IAM role ARN to assume |
 | `AWS_ROLE_SESSION_NAME` | `netsy-session` | Session name for IAM role |
 | `AWS_S3_USE_PATH_STYLE` | `false` | Path-style S3 addressing (for MinIO) |
+
+#### GCS / GCP
+
+Prefer Application Default Credentials (ADC). On GCE/GKE this usually means using the attached service account or workload identity. Outside GCP, point the SDK at a service-account JSON file.
+
+| Env Var | Default | Description |
+|---|---|---|
+| `GOOGLE_APPLICATION_CREDENTIALS` | — | Path to a GCP service-account JSON credentials file |
+
+### Provider Notes
+
+- For `storage.provider = "s3"`, `storage.class` uses S3 storage class names and `storage.kms_key_id` should be an AWS KMS key ID or ARN.
+- For `storage.provider = "gcs"`, `storage.class` uses GCS storage classes such as `STANDARD`, `NEARLINE`, `COLDLINE`, or `ARCHIVE`, and `storage.kms_key_id` should be a full Cloud KMS key resource.
+- `storage.encryption = "provider-managed"` uses the cloud provider's default server-side encryption.
+- `storage.encryption = "customer-managed"` requires `storage.kms_key_id`.

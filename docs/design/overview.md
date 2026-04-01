@@ -21,7 +21,9 @@ description: "Overview of Netsy terminology, requirements, leader election, and 
 - __Receipt__: a message sent by a Replica to the Primary confirming that a Record has been durably committed to the Replica's local SQLite database. Every Receipt embeds a Heartbeat.
 - __Revision__: a monotonically increasing integer assigned by the Primary to each Record. Every write operation (create, update, delete) produces a new Record at the next revision number.
 - __Committed Revision__: the highest Revision that has been confirmed committed by the Primary (quorum met or written to object storage).
-- __Commit__: a message sent by the Primary to Replicas advancing the Committed Revision, allowing Replicas to serve Records up to that Revision to Clients and Watches.
+- __Initial__: a logical message sent by the Primary to a Replica when a `Follow` stream is first established, carrying the current Committed and Compaction Revision.
+- __Commit__: a logical message sent by the Primary to Replicas on the replication stream, advancing the Committed Revision and allowing Replicas to serve Records up to that Revision to Clients and Watches.
+- __Compact__: a logical message sent by the Primary to Replicas on the replication stream, confirming the current Compaction Revision for watch-admission gating and per-Node compaction execution.
 - __Watch__: a long-lived subscription to key/key-range changes that streams ordered updates (puts/deletes) in real time as they are committed (at or below the `committed_revision`).
 - __Bind Address__: a host+port string used for binding a gRPC server to a given IP or hostname and port e.g. `0.0.0.0:2378`
 - __Advertise Address__: a host+port string used for a Client or Peer to connect to the Node or Cluster e.g. `172.16.0.1:2378` or `etcd.example.com:2378`
@@ -30,11 +32,11 @@ description: "Overview of Netsy terminology, requirements, leader election, and 
 
 ## Cluster State
 
-There are two fields referred to as the "Cluster State" communicated to all Nodes:
+There are two components referred to as the "Cluster State" communicated to all Nodes:
 
-- `Elector` Node ID
+- Current `Elector` Node
 
-- `Primary` Node ID
+- Current `Primary` Node
 
 ## Node States
 
@@ -81,7 +83,7 @@ Each __Node__ has three state fields which can be read via the __Peer__ API:
 - The __Primary__ writes data to its SQLite database, object storage, and all __Replicas__.
     - In a __Cluster__ without enough `Healthy` __Replicas__ to meet the configured quorum threshold, writes are synchronous to the object storage bucket, and therefore it is the canonical system-of-record.
     - Where there are enough `Healthy` __Replicas__ to meet the quorum threshold, a transaction can be committed when those __Replicas__ confirm Receipt of the Record, and writes to object storage are asynchronous/buffered. See [Quorum Configuration](./storage-replication.md#quorum-configuration) for details.
-    - The __Primary__ sends the current __Committed Revision__ to __Replicas__ alongside __Records__ on the replication stream. Records above the __Committed Revision__ are tentative and, if a rollback occurs, will be overwritten by a new transaction from the same __Primary__.
+    - The __Primary__ sends `PrimaryMessage` values to __Replicas__ on the replication stream, where `initial` carries the current Committed Revision and current Compaction Revision for a newly established stream, `record` is treated as a logical Record message, `commit` advances the current __Committed Revision__, and `compact` advances the current Compaction Revision. Records above the __Committed Revision__ are tentative and, if a rollback occurs, will be overwritten by a new transaction from the same __Primary__.
     - Data is sent to __Replicas__ via gRPC streams, and is stored in object storage using a custom [Netsy Data File](./data-files.md) format.
     - __Replicas__ must not accept data from the __Primary__ unless its Primary State is not `Replica` (must be `Starting`, `Active`, or `Draining`).
     - The __Primary__ must accept connections from __Replicas__ when its Primary State is `Starting`, `Active`, or `Draining`.
@@ -97,6 +99,7 @@ Each __Node__ has three state fields which can be read via the __Peer__ API:
 - Each __Node__ has:
     - A server certificate (used on __Client__ and __Peer__ gRPC servers) and a client certificate (used for outbound __Peer__ connections).
     - The `CN` (Node ID) is validated during loading/startup to ensure it matches the Node configuration.
+    - The server certificate SANs are validated during loading/startup to ensure they cover the configured Client, Peer, and election advertise addresses.
     - A __Bind__ address and an __Advertise__ address for __Client__ Node/Cluster connections and __Peer__ Node connections.
 - For __Service Discovery__, each __Node__ registers itself by writing a file in object storage under the `nodes/` prefix containing its Advertise addresses.
     - The __Elector__ also maintains a durable `members.json` file containing the Cluster ID and stable etcd `member_id -> node_id` mappings used for cluster topology APIs such as `MemberList`.

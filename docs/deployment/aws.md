@@ -1,6 +1,6 @@
 ---
 title: "AWS"
-weight: 30
+weight: 40
 description: "How to run Netsy on AWS"
 ---
 

@@ -45,6 +45,7 @@ To determine which to follow for any given transaction, the Netsy Primary keeps 
         - Increment Revision counter, advance `committed_revision`
         - Send record to any connected Replicas asynchronously
             - note: asynchronously means do not wait for Receipt, though it is still tracked for health
+        - Send updated `committed_revision` to Replicas as a logical Commit message on the replication stream
 
 7. Respond to client
 
@@ -62,7 +63,7 @@ To determine which to follow for any given transaction, the Netsy Primary keeps 
     - Increment Revision counter
     - Advance `committed_revision` to this Revision
     - Buffer record for async object storage write
-    - Send updated `committed_revision` to Replicas on the replication stream (before responding to the client, so Replicas can serve the record immediately upon client read-after-write)
+    - Send updated `committed_revision` to Replicas as a logical Commit message on the replication stream (before responding to the client, so Replicas can serve the record immediately upon client read-after-write)
     - Respond to client
 8. Timeout / insufficient Receipts:
     - Mark timed-out Replicas as unhealthy

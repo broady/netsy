@@ -28,7 +28,7 @@ Why are there two tiers? The “second tier” leader election logic for determi
 
 Nodes can establish which Node is currently the Elector using s3lect, which does so by querying object storage, and also has an efficient HTTPS-based mechanism during a stable state.
 
-Nodes can determine which Node is the Primary by querying the Elector.
+Nodes can determine which Node is the Primary by querying the Elector's `GetClusterState` RPC, which returns the authoritative current Elector / Primary role info (Node and Member IDs and Peer advertise addresses).
 
 ## Service Discovery for Nodes
 
@@ -36,9 +36,11 @@ The Elector requires knowledge of all Nodes in its Cluster. The mechanism for re
 
 During the Node `Loading` Health State, Netsy ensures a JSON file is written to object storage for its Node ID, containing its Advertise address(es). The path used for this is `nodes/{node_id}.json`.
 
-Separately, the Elector manages a durable `members.json` file containing the `cluster_id` and stable etcd `member_id -> node_id` mappings. This file is updated only by the Elector using object storage `If-Match` semantics during direct Node registration, allowing the same `node_id` to re-use its previous `member_id` after deregistration or restart.
+If a Node finds an existing registration file for its own `node_id` with the same data such as advertise addresses, it treats that as a no-op. If the existing file contains different advertise addresses, the Node fails startup rather than silently overwriting the existing registration for the same `node_id`.
 
-When a Node becomes an Elector, it stores a map of Nodes, their addresses, and their stable etcd `member_id` values in-memory, populated immediately from `members.json` and the active `nodes/` registration files in object storage, and updated by each new Node registration directly once the Node becomes Elector (which can happen before the object storage backfill is completed). Until the initial load from object storage is complete, an Elector will not perform leader election for a new Primary.
+Separately, the Elector manages a durable `members.json` file containing the `cluster_id` and stable etcd `member_id -> node_id` mappings. This file is updated only by the Elector using an object storage precondition (conditional-write / compare-and-swap semantics) during direct Node registration, allowing the same `node_id` to re-use its previous `member_id` after deregistration or restart. The assigned or re-used `member_id` is returned to the Node in the registration response.
+
+When a Node becomes an Elector, it stores a map of Nodes, their addresses, and their stable etcd `member_id` values in-memory, populated immediately from `members.json` and the active `nodes/` registration files in object storage, and updated by each new Node registration directly once the Node becomes Elector (which can happen before the object storage backfill is completed). If `members.json` does not exist yet, the first Elector creates it and allocates stable `member_id` values for the discovered active Nodes, including itself, before serving authoritative Cluster State. This in-memory map is the authoritative role-to-address source used by `GetClusterState`. Until the initial load from object storage is complete, an Elector will not perform leader election for a new Primary.
 
 ### Node Deregistration
 
@@ -109,7 +111,7 @@ Leader election will continue retrying every 500 milliseconds until successful, 
 
 Once an Elector is newly elected and has loaded its Service Discovery map, it can begin to push Cluster State to each Node, and receive Node State information via Heartbeats from each Node.
 
-- Cluster State includes the current Elector and current Primary.
+- Cluster State includes the current Elector and current Primary, expressed as NodeInfo (containing Node ID, stable etcd `member_id`, and Peer advertise address).
 
 - Node State is received by the Elector from each Node via Heartbeats (sent on a regular cadence, and embedded in every Receipt sent to the Primary). This includes the Node's current Health State, current Primary State, and latest Revision.
 
@@ -119,9 +121,13 @@ This approach is taken to propagate Cluster State as fast as possible.
 
 - Each Node can detect if there's a bug resulting in Elector split-brain because it will have two Electors attempting to connect concurrently and can guard against this.
 
+- Non-Elector Nodes treat the Elector's `GetClusterState` response and `PushClusterState` updates as the authoritative mapping from the current Elector / Primary roles to dialable Peer addresses.
+
 Cluster State push is triggered immediately as part of Netsy updating its in-memory state for Elector and Primary. When iterating over each Node to push this Cluster State, it will always push the latest Cluster State to the Primary first, followed by all other known Nodes.
 
 - When a Node receives the updated Cluster State indicating it has become the Primary, it will move its Primary State from `Replica` to `Starting` and begin to perform pre-flight checks.
+
+- When a Replica receives updated Cluster State indicating the Primary has changed, it immediately reconnects its replication stream to the new Primary using the pushed Peer advertise address.
 
 ## Primary Node
 
@@ -129,9 +135,11 @@ Once Replicas receives Cluster State indicating there is a new Primary elected, 
 
 This stream is used to:
 
-1. Receive new Records from the Primary
+1. Receive an `Initial` message carrying the current Committed and Compaction Revision, then receive new Records from the Primary
 2. Send a Receipt confirming a new Record has been committed by the Replica (every Receipt embeds a Heartbeat message containing the Node's current state)
 3. Send a standalone Heartbeat if no Receipt has been sent within the heartbeat cadence/timeout
+
+Separately, the Primary sends a logical Commit message on the `Follow` stream to advance the Replica's `committed_revision` once a Record is considered committed, and sends a logical Compact message once a new Compaction Revision has been tenatively held cluster-wide. The initial message sent when the stream is established updates the local Committed Revision and Compaction Revision using the same code path as later Commit and Compact updates.
 
 The Primary processes Receipt-embedded Heartbeats and standalone Heartbeats using the same code path, since both contain identical Node State information (Health State, Primary State, latest Revision).
 

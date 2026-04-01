@@ -1,6 +1,6 @@
 ---
 title: "TLS Certificates"
-weight: 10
+weight: 20
 description: "TLS certificate requirements and generation for Netsy clusters"
 ---
 
@@ -8,7 +8,7 @@ description: "TLS certificate requirements and generation for Netsy clusters"
 
 Netsy uses mutual TLS (mTLS) for authentication for Nodes, Peers, and Clients.
 
-Each Node requires a server certificate (for serving gRPC) and a client certificate (for Nodes connecting to Peers).
+Each Node requires a server certificate (for serving gRPC and the Elector/s3lect election health listener) and a client certificate (for Nodes connecting to Peers).
 
 Presented client certificates embed a role of either `peer` or `client`, and Netsy authorises the connection based on that role.
 
@@ -44,9 +44,11 @@ Both `cluster_id` and `node_id` must be:
 Used by a Node on the Client API and Peer API gRPC servers. Must include:
 
 - **Subject**: `O={cluster_id}, OU=peer, CN={node_id}`
-- **Subject Alternative Names (SANs)**: all bind and advertise addresses for this Node (Client API, Peer API, and s3lect health server)
+- **Subject Alternative Names (SANs)**: the advertise addresses and any literal hostnames/IPs that peers or clients actually dial for this Node (Client API, Peer API, and Elector/s3lect peer and health server)
 - **Key Usage**: Digital Signature, Key Encipherment
 - **Extended Key Usage**: TLS Web Server Authentication
+
+At startup, Netsy validates that the peer-certificate subject matches the configured `node_id` / `cluster_id`, and that the server certificate SANs cover the configured Client, Peer, and election advertise addresses.
 
 ### Node Client Certificate
 
@@ -66,12 +68,15 @@ NODE_ID="node-1"
 DAYS=365
 
 # Addresses for SANs (adjust to your environment)
-CLIENT_ADDR_IP="172.16.0.1"
-PEER_ADDR_IP="172.16.0.1"
-ELECTOR_ADDR_IP="172.16.0.1"
+CLIENT_ADDR_IP4="172.16.0.1"
+CLIENT_ADDR_IP6="2001:db8::10"
+PEER_ADDR_IP4="172.16.0.1"
+PEER_ADDR_IP6="2001:db8::10"
+ELECTOR_ADDR_IP4="172.16.0.1"
+ELECTOR_ADDR_IP6="2001:db8::10"
 ```
 
-Note that if you want to use DNS names instead of IPs for the Client, Peer, and Elector (s3lect) addresses the examples below will need to be adjusted accordingly.
+Note that if you want to use DNS names instead of IPs for the Client, Peer, and Elector (s3lect) addresses the examples below will need to be adjusted accordingly. Include SANs only for the actual addresses or hostnames that callers use.
 
 ### 1. Create the Cluster CA
 
@@ -110,10 +115,14 @@ extendedKeyUsage = serverAuth
 subjectAltName = @alt_names
 
 [alt_names]
-IP.1 = ${CLIENT_ADDR_IP}
-IP.2 = ${PEER_ADDR_IP}
-IP.3 = ${ELECTOR_ADDR_IP}
-IP.4 = 127.0.0.1
+IP.1 = ${CLIENT_ADDR_IP4}
+IP.2 = ${CLIENT_ADDR_IP6}
+IP.3 = ${PEER_ADDR_IP4}
+IP.4 = ${PEER_ADDR_IP6}
+IP.5 = ${ELECTOR_ADDR_IP4}
+IP.6 = ${ELECTOR_ADDR_IP6}
+IP.7 = 127.0.0.1
+IP.8 = ::1
 DNS.1 = localhost
 EOF
 ```
@@ -231,11 +240,11 @@ For a 3-node cluster, repeat steps 2–3 for each node with a different `NODE_ID
 
 ```bash
 # Node 1
-NODE_ID="node-1" CLIENT_ADDR="172.16.0.1" PEER_ADDR="172.16.0.1" S3LECT_ADDR="172.16.0.1"
+NODE_ID="node-1" CLIENT_ADDR_V4="172.16.0.1" CLIENT_ADDR_V6="2001:db8::11" PEER_ADDR_V4="172.16.0.1" PEER_ADDR_V6="2001:db8::11" ELECTOR_ADDR_V4="172.16.0.1" ELECTOR_ADDR_V6="2001:db8::11"
 
 # Node 2
-NODE_ID="node-2" CLIENT_ADDR="172.16.0.2" PEER_ADDR="172.16.0.2" S3LECT_ADDR="172.16.0.2"
+NODE_ID="node-2" CLIENT_ADDR_V4="172.16.0.2" CLIENT_ADDR_V6="2001:db8::12" PEER_ADDR_V4="172.16.0.2" PEER_ADDR_V6="2001:db8::12" ELECTOR_ADDR_V4="172.16.0.2" ELECTOR_ADDR_V6="2001:db8::12"
 
 # Node 3
-NODE_ID="node-3" CLIENT_ADDR="172.16.0.3" PEER_ADDR="172.16.0.3" S3LECT_ADDR="172.16.0.3"
+NODE_ID="node-3" CLIENT_ADDR_V4="172.16.0.3" CLIENT_ADDR_V6="2001:db8::13" PEER_ADDR_V4="172.16.0.3" PEER_ADDR_V6="2001:db8::13" ELECTOR_ADDR_V4="172.16.0.3" ELECTOR_ADDR_V6="2001:db8::13"
 ```

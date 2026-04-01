@@ -10,3 +10,4 @@ description: "Deploying and running Netsy"
 - [TLS](tls.md) – TLS certificate requirements and generation for Netsy clusters
 - [Systemd](systemd.md) – Example systemd unit file
 - [AWS](aws.md) – How to run Netsy on AWS
+- [Google Cloud](gcp.md) – How to run Netsy on Google Cloud
