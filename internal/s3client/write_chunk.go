@@ -12,7 +12,6 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/aws/aws-sdk-go-v2/service/s3/types"
-	"github.com/go-kit/log/level"
 )
 
 // WriteChunkFile writes a chunk file to S3
@@ -26,13 +25,13 @@ func (s *S3Client) WriteChunkFile(ctx context.Context, key string, data io.Reade
 
 	// Prepare S3 key with prefix
 	s3Key := key
-	if s.config.S3KeyPrefix() != "" {
-		s3Key = s.config.S3KeyPrefix() + "/" + key
+	if s.config.Storage.KeyPrefix != "" {
+		s3Key = s.config.Storage.KeyPrefix + "/" + key
 	}
 
 	// Prepare put object input with conditional write to prevent overwrite
-	bucketName := s.config.S3BucketName()
-	storageClass := s.config.S3StorageClass()
+	bucketName := s.config.Storage.BucketName
+	storageClass := s.config.Storage.Class
 	input := &s3.PutObjectInput{
 		Bucket:           &bucketName,
 		Key:              &s3Key,
@@ -42,13 +41,13 @@ func (s *S3Client) WriteChunkFile(ctx context.Context, key string, data io.Reade
 	}
 
 	// Set server-side encryption
-	if s.config.S3Encryption() == "aws:kms" {
+	if s.config.Storage.Encryption == "customer-managed" {
 		input.ServerSideEncryption = types.ServerSideEncryptionAwsKms
-		if s.config.S3KMSKeyID() != "" {
-			kmsKeyID := s.config.S3KMSKeyID()
+		if s.config.Storage.KMSKeyID != "" {
+			kmsKeyID := s.config.Storage.KMSKeyID
 			input.SSEKMSKeyId = &kmsKeyID
 		}
-	} else if s.config.S3Encryption() == "AES256" {
+	} else {
 		input.ServerSideEncryption = types.ServerSideEncryptionAes256
 	}
 
@@ -58,6 +57,6 @@ func (s *S3Client) WriteChunkFile(ctx context.Context, key string, data io.Reade
 		return fmt.Errorf("failed to upload to S3: %w", err)
 	}
 
-	level.Debug(s.logger).Log("msg", "chunk file uploaded to S3", "key", s3Key, "bucket", s.config.S3BucketName())
+	s.logger.Debug("chunk file uploaded to S3", "key", s3Key, "bucket", s.config.Storage.BucketName)
 	return nil
 }

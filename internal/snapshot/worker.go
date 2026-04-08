@@ -11,8 +11,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/go-kit/log"
-	"github.com/go-kit/log/level"
+	"log/slog"
+
 	"github.com/nadrama-com/netsy/internal/config"
 	"github.com/nadrama-com/netsy/internal/datafile"
 	"github.com/nadrama-com/netsy/internal/localdb"
@@ -29,7 +29,7 @@ type SnapshotRequest struct {
 
 // Worker handles snapshot creation in a separate goroutine
 type Worker struct {
-	logger    log.Logger
+	logger    *slog.Logger
 	config    *config.Config
 	db        localdb.Database
 	s3Client  *s3client.S3Client
@@ -52,7 +52,7 @@ type Worker struct {
 }
 
 // NewWorker creates a new snapshot worker
-func NewWorker(logger log.Logger, config *config.Config, db localdb.Database, s3Client *s3client.S3Client) *Worker {
+func NewWorker(logger *slog.Logger, config *config.Config, db localdb.Database, s3Client *s3client.S3Client) *Worker {
 	ctx, cancel := context.WithCancel(context.Background())
 	
 	return &Worker{
@@ -89,18 +89,18 @@ func (w *Worker) RequestSnapshot(revision int64, timestamp time.Time, recordSize
 		// Request sent successfully
 	default:
 		// Channel is full, log warning but don't block
-		level.Warn(w.logger).Log("msg", "snapshot request channel full, dropping request", "revision", revision)
+		w.logger.Warn("snapshot request channel full, dropping request", "revision", revision)
 	}
 }
 
 // run is the main worker loop
 func (w *Worker) run() {
-	level.Info(w.logger).Log("msg", "snapshot worker started")
+	w.logger.Info("snapshot worker started")
 	
 	for {
 		select {
 		case <-w.ctx.Done():
-			level.Info(w.logger).Log("msg", "snapshot worker stopping")
+			w.logger.Info("snapshot worker stopping")
 			return
 		case req := <-w.requestCh:
 			w.processRequest(req)
@@ -139,7 +139,7 @@ func (w *Worker) processRequest(req SnapshotRequest) {
 		return
 	}
 	
-	level.Info(w.logger).Log("msg", "snapshot thresholds met, creating snapshot",
+	w.logger.Info("snapshot thresholds met, creating snapshot",
 		"current_revision", req.Revision, "reason", reason)
 	
 	w.createSnapshot(req.Revision)
@@ -154,25 +154,25 @@ func (w *Worker) shouldCreateSnapshot(currentRevision int64, currentTime time.Ti
 	}
 
 	// Check record count threshold
-	recordsThreshold := w.config.SnapshotThresholdRecords()
+	recordsThreshold := w.config.Snapshot.ThresholdRecords
 	if recordsThreshold > 0 && (currentRevision-lastRevision) >= recordsThreshold {
-		level.Debug(w.logger).Log("msg", "snapshot record threshold reached",
+		w.logger.Debug("snapshot record threshold reached",
 			"current_revision", currentRevision, "last_snapshot_revision", lastRevision,
 			"records_since_last", currentRevision-lastRevision, "threshold", recordsThreshold)
 		return true, "record_count"
 	}
 
 	// Check age threshold
-	ageThreshold := w.config.SnapshotThresholdAgeMinutes()
+	ageThreshold := w.config.Snapshot.ThresholdAgeMinutes
 	if ageThreshold > 0 {
 		if lastTime.IsZero() {
 			// First snapshot - create immediately if age threshold is enabled
-			level.Debug(w.logger).Log("msg", "first snapshot - age threshold enabled", "threshold_minutes", ageThreshold)
+			w.logger.Debug("first snapshot - age threshold enabled", "threshold_minutes", ageThreshold)
 			return true, "first_snapshot"
 		} else {
 			timeSinceLastSnapshot := currentTime.Sub(lastTime)
 			if timeSinceLastSnapshot >= time.Duration(ageThreshold)*time.Minute {
-				level.Debug(w.logger).Log("msg", "snapshot age threshold reached",
+				w.logger.Debug("snapshot age threshold reached",
 					"time_since_last", timeSinceLastSnapshot, "threshold_minutes", ageThreshold)
 				return true, "age"
 			}
@@ -180,12 +180,12 @@ func (w *Worker) shouldCreateSnapshot(currentRevision int64, currentTime time.Ti
 	}
 
 	// Check size threshold using cumulative size since last snapshot
-	sizeThresholdMB := w.config.SnapshotThresholdSizeMB()
+	sizeThresholdMB := w.config.Snapshot.ThresholdSizeMB
 	if sizeThresholdMB > 0 {
 		cumulativeSizeMB := cumulativeSize / (1024 * 1024)
 
 		if cumulativeSizeMB >= sizeThresholdMB {
-			level.Debug(w.logger).Log("msg", "snapshot size threshold reached",
+			w.logger.Debug("snapshot size threshold reached",
 				"cumulative_size_mb", cumulativeSizeMB, "threshold_mb", sizeThresholdMB)
 			return true, "size"
 		}
@@ -200,42 +200,42 @@ func (w *Worker) createSnapshot(upToRevision int64) {
 	w.snapshotMutex.Lock()
 	defer w.snapshotMutex.Unlock()
 
-	level.Info(w.logger).Log("msg", "starting snapshot creation", "up_to_revision", upToRevision)
+	w.logger.Info("starting snapshot creation", "up_to_revision", upToRevision)
 
 	// Get all non-compacted records up to the specified revision
 	records, err := w.db.FindAllRecordsForSnapshot(upToRevision)
 	if err != nil {
-		level.Error(w.logger).Log("msg", "failed to get records for snapshot", "error", err)
+		w.logger.Error("failed to get records for snapshot", "error", err)
 		return
 	}
 
 	if len(records) == 0 {
-		level.Warn(w.logger).Log("msg", "no records found for snapshot", "up_to_revision", upToRevision)
+		w.logger.Warn("no records found for snapshot", "up_to_revision", upToRevision)
 		return
 	}
 
 	// Create temporary file for snapshot
-	tempFile, err := os.CreateTemp(w.config.DataDir(), fmt.Sprintf("snapshot_%d_*.netsy", upToRevision))
+	tempFile, err := os.CreateTemp(w.config.DataDir, fmt.Sprintf("snapshot_%d_*.netsy", upToRevision))
 	if err != nil {
-		level.Error(w.logger).Log("msg", "failed to create temporary snapshot file", "error", err)
+		w.logger.Error("failed to create temporary snapshot file", "error", err)
 		return
 	}
 	tempFilePath := tempFile.Name()
 	defer func() {
 		tempFile.Close()
 		if err := os.Remove(tempFilePath); err != nil && !os.IsNotExist(err) {
-			level.Warn(w.logger).Log("msg", "failed to cleanup temporary snapshot file", "file", tempFilePath, "error", err)
+			w.logger.Warn("failed to cleanup temporary snapshot file", "file", tempFilePath, "error", err)
 		}
 	}()
 
 	// Write snapshot using datafile writer
-	level.Debug(w.logger).Log("msg", "writing snapshot file", "temp_file", tempFilePath, "records_count", len(records))
+	w.logger.Debug("writing snapshot file", "temp_file", tempFilePath, "records_count", len(records))
 	err = w.writeSnapshotFile(tempFile, records, upToRevision)
 	if err != nil {
-		level.Error(w.logger).Log("msg", "failed to write snapshot file", "temp_file", tempFilePath, "error", err)
+		w.logger.Error("failed to write snapshot file", "temp_file", tempFilePath, "error", err)
 		return
 	}
-	level.Debug(w.logger).Log("msg", "snapshot file written successfully", "temp_file", tempFilePath)
+	w.logger.Debug("snapshot file written successfully", "temp_file", tempFilePath)
 
 	// Close temp file before upload
 	tempFile.Close()
@@ -243,37 +243,37 @@ func (w *Worker) createSnapshot(upToRevision int64) {
 	// Upload snapshot to S3 (UploadFile will add the prefix)
 	snapshotKey := fmt.Sprintf("snapshots/%019d.netsy", upToRevision)
 
-	level.Info(w.logger).Log("msg", "uploading snapshot to S3", "key", snapshotKey, "file_path", tempFilePath)
+	w.logger.Info("uploading snapshot to S3", "key", snapshotKey, "file_path", tempFilePath)
 
 	err = w.s3Client.UploadFile(w.ctx, snapshotKey, tempFilePath)
 	if err != nil {
-		level.Error(w.logger).Log("msg", "failed to upload snapshot to S3", "key", snapshotKey, "file_path", tempFilePath, "error", err)
+		w.logger.Error("failed to upload snapshot to S3", "key", snapshotKey, "file_path", tempFilePath, "error", err)
 		return
 	}
 
-	level.Info(w.logger).Log("msg", "snapshot uploaded to S3 successfully", "revision", upToRevision, "records", len(records), "key", snapshotKey)
+	w.logger.Info("snapshot uploaded to S3 successfully", "revision", upToRevision, "records", len(records), "key", snapshotKey)
 
 	// Start cleanup of old chunk files
-	level.Info(w.logger).Log("msg", "starting chunk file cleanup", "up_to_revision", upToRevision)
+	w.logger.Info("starting chunk file cleanup", "up_to_revision", upToRevision)
 
 	// List all chunk files that are covered by the snapshot (revision <= upToRevision)
 	chunks, err := w.s3Client.ListChunksForCleanup(w.ctx, upToRevision)
 	if err != nil {
-		level.Error(w.logger).Log("msg", "failed to list chunks for cleanup", "error", err)
+		w.logger.Error("failed to list chunks for cleanup", "error", err)
 		return
 	}
 	deletedCount := 0
 	for _, chunk := range chunks {
 		err := w.s3Client.DeleteFile(w.ctx, chunk.Key)
 		if err != nil {
-			level.Warn(w.logger).Log("msg", "failed to delete chunk file", "key", chunk.Key, "error", err)
+			w.logger.Warn("failed to delete chunk file", "key", chunk.Key, "error", err)
 			continue
 		}
 		deletedCount++
-		level.Debug(w.logger).Log("msg", "deleted chunk file", "key", chunk.Key, "revision", chunk.Revision)
+		w.logger.Debug("deleted chunk file", "key", chunk.Key, "revision", chunk.Revision)
 	}
 
-	level.Info(w.logger).Log("msg", "chunk file cleanup completed",
+	w.logger.Info("chunk file cleanup completed",
 		"up_to_revision", upToRevision, "deleted_chunks", deletedCount)
 }
 
@@ -284,7 +284,7 @@ func (w *Worker) writeSnapshotFile(file *os.File, records []*proto.Record, upToR
 	defer buffer.Flush()
 
 	// Create datafile writer for snapshot
-	writer, err := datafile.NewWriter(buffer, proto.FileKind_KIND_SNAPSHOT, int64(len(records)), w.config.InstanceID())
+	writer, err := datafile.NewWriter(buffer, proto.FileKind_KIND_SNAPSHOT, int64(len(records)), w.config.NodeID)
 	if err != nil {
 		return fmt.Errorf("failed to create datafile writer: %w", err)
 	}
@@ -317,7 +317,7 @@ func (w *Worker) InitializeWithSnapshot(snapshotInfo *s3client.LatestSnapshotInf
 		w.lastSnapshotTime = time.Time{}
 		w.cumulativeSize = 0
 		
-		level.Info(w.logger).Log("msg", "no existing snapshots found, initialized with default state")
+		w.logger.Info("no existing snapshots found, initialized with default state")
 		return
 	}
 
@@ -326,6 +326,6 @@ func (w *Worker) InitializeWithSnapshot(snapshotInfo *s3client.LatestSnapshotInf
 	w.lastSnapshotTime = time.Now() // Use current time since we don't know exact creation time
 	w.cumulativeSize = 0 // Start tracking from zero
 
-	level.Info(w.logger).Log("msg", "initialized snapshot tracking from existing snapshot",
+	w.logger.Info("initialized snapshot tracking from existing snapshot",
 		"latest_snapshot_revision", snapshotInfo.Revision)
 }

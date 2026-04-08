@@ -9,7 +9,6 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/go-kit/log/level"
 	"github.com/nadrama-com/netsy/internal/datafile"
 	pb "github.com/nadrama-com/netsy/internal/proto"
 )
@@ -22,7 +21,7 @@ func (s *S3Client) WriteRecord(ctx context.Context, record *pb.Record) error {
 
 	// Create datafile writer for a single record chunk
 	// Use the instance ID from config as the leader ID
-	leaderID := s.config.InstanceID()
+	leaderID := s.config.NodeID
 	writer, err := datafile.NewWriter(bufWriter, pb.FileKind_KIND_CHUNK, 1, leaderID)
 	if err != nil {
 		return fmt.Errorf("failed to create datafile writer: %w", err)
@@ -50,15 +49,15 @@ func (s *S3Client) WriteRecord(ctx context.Context, record *pb.Record) error {
 	// Upload to S3 with retry-once logic
 	err = s.WriteChunkFile(ctx, key, bytes.NewReader(buffer.Bytes()))
 	if err != nil {
-		level.Debug(s.logger).Log("msg", "first S3 upload attempt failed, retrying once", "error", err, "key", key)
+		s.logger.Debug("first S3 upload attempt failed, retrying once", "error", err, "key", key)
 		// Retry once on failure
 		err = s.WriteChunkFile(ctx, key, bytes.NewReader(buffer.Bytes()))
 		if err != nil {
 			return fmt.Errorf("S3 upload failed after retry: %w", err)
 		}
-		level.Info(s.logger).Log("msg", "S3 upload succeeded on retry", "key", key)
+		s.logger.Info("S3 upload succeeded on retry", "key", key)
 	}
 
-	level.Debug(s.logger).Log("msg", "record written to S3", "revision", record.Revision, "key", key)
+	s.logger.Debug("record written to S3", "revision", record.Revision, "key", key)
 	return nil
 }

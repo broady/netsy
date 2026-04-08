@@ -1,7 +1,7 @@
 // Copyright 2025 Nadrama Pty Ltd
 // SPDX-License-Identifier: Apache-2.0
 
-package peerapi
+package primary
 
 import (
 	"strings"

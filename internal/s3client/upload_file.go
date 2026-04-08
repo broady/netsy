@@ -11,7 +11,6 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/aws/aws-sdk-go-v2/service/s3/types"
-	"github.com/go-kit/log/level"
 )
 
 // UploadFile uploads a local file to S3
@@ -31,13 +30,13 @@ func (s *S3Client) UploadFile(ctx context.Context, key, filePath string) error {
 
 	// Prepare S3 key with prefix
 	s3Key := key
-	if s.config.S3KeyPrefix() != "" {
-		s3Key = s.config.S3KeyPrefix() + "/" + key
+	if s.config.Storage.KeyPrefix != "" {
+		s3Key = s.config.Storage.KeyPrefix + "/" + key
 	}
 
 	// Prepare put object input
-	bucketName := s.config.S3BucketName()
-	storageClass := s.config.S3StorageClass()
+	bucketName := s.config.Storage.BucketName
+	storageClass := s.config.Storage.Class
 	input := &s3.PutObjectInput{
 		Bucket:       &bucketName,
 		Key:          &s3Key,
@@ -47,23 +46,23 @@ func (s *S3Client) UploadFile(ctx context.Context, key, filePath string) error {
 	}
 
 	// Set server-side encryption
-	if s.config.S3Encryption() == "aws:kms" {
+	if s.config.Storage.Encryption == "customer-managed" {
 		input.ServerSideEncryption = types.ServerSideEncryptionAwsKms
-		if s.config.S3KMSKeyID() != "" {
-			kmsKeyID := s.config.S3KMSKeyID()
+		if s.config.Storage.KMSKeyID != "" {
+			kmsKeyID := s.config.Storage.KMSKeyID
 			input.SSEKMSKeyId = &kmsKeyID
 		}
-	} else if s.config.S3Encryption() == "AES256" {
+	} else {
 		input.ServerSideEncryption = types.ServerSideEncryptionAes256
 	}
 
 	// Upload to S3
-	level.Debug(s.logger).Log("msg", "uploading to S3", "bucket", s.config.S3BucketName(), "key", s3Key, "size", fileInfo.Size())
+	s.logger.Debug("uploading to S3", "bucket", s.config.Storage.BucketName, "key", s3Key, "size", fileInfo.Size())
 	_, err = s.client.PutObject(ctx, input)
 	if err != nil {
 		return fmt.Errorf("failed to upload file to S3: %w", err)
 	}
 
-	level.Info(s.logger).Log("msg", "file uploaded to S3", "key", s3Key, "bucket", s.config.S3BucketName(), "size", fileInfo.Size())
+	s.logger.Info("file uploaded to S3", "key", s3Key, "bucket", s.config.Storage.BucketName, "size", fileInfo.Size())
 	return nil
 }

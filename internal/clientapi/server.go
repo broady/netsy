@@ -5,11 +5,11 @@ package clientapi
 
 import (
 	"fmt"
+	"log/slog"
 
-	"github.com/go-kit/log"
 	"github.com/nadrama-com/netsy/internal/config"
 	"github.com/nadrama-com/netsy/internal/localdb"
-	"github.com/nadrama-com/netsy/internal/peerapi"
+	"github.com/nadrama-com/netsy/internal/primary"
 	"github.com/nadrama-com/netsy/internal/s3client"
 	"github.com/nadrama-com/netsy/internal/snapshot"
 
@@ -32,12 +32,12 @@ import (
 // * Auth
 // we include the 'Unimplemented' services by default and override them where required
 type ClientAPIServer struct {
-	logger     log.Logger
+	logger     *slog.Logger
 	config     *config.Config
 	db         localdb.Database
 	grpcServer *grpc.Server
 	// note: in future we will replace this with a peer server gRPC client
-	peerServer *peerapi.PeerAPIServer
+	peerServer *primary.Server
 	// note: sending messages not currently required
 	//wsSendCh     chan []byte
 	pb.UnimplementedKVServer
@@ -48,14 +48,14 @@ type ClientAPIServer struct {
 	pb.UnimplementedAuthServer
 }
 
-func NewServer(logger log.Logger, conf *config.Config, db localdb.Database, grpcServer *grpc.Server, snapshotWorker *snapshot.Worker, s3Client *s3client.S3Client) (*ClientAPIServer, error) {
+func NewServer(logger *slog.Logger, conf *config.Config, db localdb.Database, grpcServer *grpc.Server, snapshotWorker *snapshot.Worker, s3Client *s3client.S3Client) (*ClientAPIServer, error) {
 	var err error
 
 	// TODO: in future we will replace this with a peer server gRPC client
 	// when the Netsy server is not the leader
-	peerServer, err := peerapi.NewServer(logger, conf, db, snapshotWorker, s3Client)
+	peerServer, err := primary.NewServer(logger, conf, db, snapshotWorker, s3Client)
 	if err != nil {
-		return nil, fmt.Errorf("peerapi.NewServer error: %s", err)
+		return nil, fmt.Errorf("primary.NewServer error: %s", err)
 	}
 
 	clientServer := &ClientAPIServer{

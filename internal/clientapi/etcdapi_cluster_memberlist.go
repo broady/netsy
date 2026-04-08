@@ -15,8 +15,8 @@ func (cs *ClientAPIServer) MemberList(ctx context.Context, r *pb.MemberListReque
 		Members: []*pb.Member{
 			{
 				Name:       "netsy",
-				ClientURLs: []string{cs.config.ListenClientsAddr()},
-				PeerURLs:   []string{cs.config.ListenClientsAddr()},
+				ClientURLs: []string{cs.config.BindClient},
+				PeerURLs:   []string{cs.config.BindClient},
 			},
 		},
 	}, nil

@@ -7,7 +7,6 @@ import (
 	"context"
 	"errors"
 
-	"github.com/go-kit/log/level"
 	"github.com/nadrama-com/netsy/internal/localdb"
 	"github.com/nadrama-com/netsy/internal/proto"
 	pb "go.etcd.io/etcd/api/v3/etcdserverpb"
@@ -22,12 +21,12 @@ func (cs *ClientAPIServer) Txn(ctx context.Context, r *pb.TxnRequest) (resp *pb.
 			errors.Is(err, localdb.ErrCreateKeyExists) ||
 			errors.Is(err, localdb.ErrDeleteKeyNotFound) {
 			if len(r.Failure) > 0 {
-				level.Debug(cs.logger).Log("txnerror", err.Error())
+				cs.logger.Debug("txn error", "txnerror", err.Error())
 			} else {
-				level.Info(cs.logger).Log("txnerror", err.Error())
+				cs.logger.Info("txn error", "txnerror", err.Error())
 			}
 		} else {
-			cs.logger.Log("txnerror", err.Error())
+			cs.logger.Error("txn error", "txnerror", err.Error())
 		}
 		// Best-effort latest revision retrieval
 		// If this fails we still want to return a well formed error
@@ -38,18 +37,18 @@ func (cs *ClientAPIServer) Txn(ctx context.Context, r *pb.TxnRequest) (resp *pb.
 			},
 		}
 	} else if inserted != nil && inserted.Created {
-		level.Debug(cs.logger).Log("txncreated", string(inserted.Key), "rev", string(inserted.Revision))
+		cs.logger.Debug("txn created", "key", string(inserted.Key), "rev", inserted.Revision)
 	} else if inserted != nil && inserted.Deleted {
-		level.Debug(cs.logger).Log("txndeleted", string(inserted.Key), "rev", string(inserted.Revision))
+		cs.logger.Debug("txn deleted", "key", string(inserted.Key), "rev", inserted.Revision)
 	} else if inserted != nil {
-		level.Debug(cs.logger).Log("txnupdated", string(inserted.Key), "rev", string(inserted.Revision))
+		cs.logger.Debug("txn updated", "key", string(inserted.Key), "rev", inserted.Revision)
 	}
 	// Replicate to watchers
 	var prevRecord *proto.Record
 	if inserted != nil && !inserted.Created && inserted.PrevRevision > 0 {
 		prevRecord, err = cs.db.FindRecordByRev(inserted.PrevRevision)
 		if err != nil {
-			level.Debug(cs.logger).Log("findprev", string(inserted.Key), "rev", string(inserted.Revision), "prev", string(inserted.PrevRevision), "err", err.Error())
+			cs.logger.Debug("find prev", "key", string(inserted.Key), "rev", inserted.Revision, "prev", inserted.PrevRevision, "err", err.Error())
 		}
 	}
 	if inserted != nil {

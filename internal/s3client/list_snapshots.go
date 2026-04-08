@@ -11,17 +11,16 @@ import (
 	"strings"
 
 	"github.com/aws/aws-sdk-go-v2/service/s3"
-	"github.com/go-kit/log/level"
 )
 
 // ListSnapshots returns all snapshot files sorted by revision (newest first)
 func (s *S3Client) ListSnapshots(ctx context.Context) ([]FileInfo, error) {
 	prefix := "snapshots/"
-	if s.config.S3KeyPrefix() != "" {
-		prefix = s.config.S3KeyPrefix() + "/" + prefix
+	if s.config.Storage.KeyPrefix != "" {
+		prefix = s.config.Storage.KeyPrefix + "/" + prefix
 	}
 
-	bucketName := s.config.S3BucketName()
+	bucketName := s.config.Storage.BucketName
 	input := &s3.ListObjectsV2Input{
 		Bucket: &bucketName,
 		Prefix: &prefix,
@@ -49,7 +48,7 @@ func (s *S3Client) ListSnapshots(ctx context.Context) ([]FileInfo, error) {
 			revisionStr := strings.TrimSuffix(filename, ".netsy")
 			revision, err := strconv.ParseInt(revisionStr, 10, 64)
 			if err != nil {
-				level.Debug(s.logger).Log("msg", "skipping invalid snapshot filename", "filename", filename)
+				s.logger.Debug("skipping invalid snapshot filename", "filename", filename)
 				continue
 			}
 

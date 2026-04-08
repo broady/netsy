@@ -8,19 +8,18 @@ import (
 	"fmt"
 
 	"github.com/aws/aws-sdk-go-v2/service/s3"
-	"github.com/go-kit/log/level"
 )
 
 // DeleteFile deletes a file from S3
 func (s *S3Client) DeleteFile(ctx context.Context, key string) error {
 	// Prepare S3 key with prefix
 	s3Key := key
-	if s.config.S3KeyPrefix() != "" {
-		s3Key = s.config.S3KeyPrefix() + "/" + key
+	if s.config.Storage.KeyPrefix != "" {
+		s3Key = s.config.Storage.KeyPrefix + "/" + key
 	}
 
 	// Prepare delete object input
-	bucketName := s.config.S3BucketName()
+	bucketName := s.config.Storage.BucketName
 	input := &s3.DeleteObjectInput{
 		Bucket: &bucketName,
 		Key:    &s3Key,
@@ -32,6 +31,6 @@ func (s *S3Client) DeleteFile(ctx context.Context, key string) error {
 		return fmt.Errorf("failed to delete file from S3: %w", err)
 	}
 
-	level.Debug(s.logger).Log("msg", "file deleted from S3", "key", s3Key, "bucket", s.config.S3BucketName())
+	s.logger.Debug("file deleted from S3", "key", s3Key, "bucket", s.config.Storage.BucketName)
 	return nil
 }

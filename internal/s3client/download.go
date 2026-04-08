@@ -13,7 +13,6 @@ import (
 
 	"github.com/aws/aws-sdk-go-v2/feature/s3/manager"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
-	"github.com/go-kit/log/level"
 )
 
 // DownloadFile downloads a file from S3, automatically choosing the best strategy based on size
@@ -30,9 +29,9 @@ func (s *S3Client) DownloadFile(ctx context.Context, key string, size int64, dat
 
 // downloadSmallFile downloads small files to memory with retry logic
 func (s *S3Client) downloadSmallFile(ctx context.Context, key string) (io.ReadCloser, error) {
-	level.Debug(s.logger).Log("msg", "downloading small file to memory", "key", key)
+	s.logger.Debug("downloading small file to memory", "key", key)
 
-	bucketName := s.config.S3BucketName()
+	bucketName := s.config.Storage.BucketName
 	input := &s3.GetObjectInput{
 		Bucket: &bucketName,
 		Key:    &key,
@@ -46,18 +45,18 @@ func (s *S3Client) downloadSmallFile(ctx context.Context, key string) (io.ReadCl
 		if attempt > 0 {
 			// Exponential backoff with jitter
 			delay := time.Duration(attempt) * baseDelay
-			level.Debug(s.logger).Log("msg", "retrying small file download", "key", key, "attempt", attempt+1, "delay", delay)
+			s.logger.Debug("retrying small file download", "key", key, "attempt", attempt+1, "delay", delay)
 			time.Sleep(delay)
 		}
 
 		output, err := s.client.GetObject(ctx, input)
 		if err != nil {
 			lastErr = err
-			level.Debug(s.logger).Log("msg", "small file download attempt failed", "key", key, "attempt", attempt+1, "error", err)
+			s.logger.Debug("small file download attempt failed", "key", key, "attempt", attempt+1, "error", err)
 			continue
 		}
 
-		level.Debug(s.logger).Log("msg", "small file download succeeded", "key", key, "attempt", attempt+1)
+		s.logger.Debug("small file download succeeded", "key", key, "attempt", attempt+1)
 		return output.Body, nil
 	}
 
@@ -66,7 +65,7 @@ func (s *S3Client) downloadSmallFile(ctx context.Context, key string) (io.ReadCl
 
 // downloadLargeFile downloads large files to disk with multipart support
 func (s *S3Client) downloadLargeFile(ctx context.Context, key string, size int64, dataDir string, tempFiles *[]string) (io.ReadCloser, error) {
-	level.Debug(s.logger).Log("msg", "downloading large file to disk", "key", key, "size", size)
+	s.logger.Debug("downloading large file to disk", "key", key, "size", size)
 
 	// Determine file prefix based on key
 	var prefix string
@@ -93,7 +92,7 @@ func (s *S3Client) downloadLargeFile(ctx context.Context, key string, size int64
 		d.Concurrency = 3 // Download up to 3 parts concurrently
 	})
 
-	bucketName := s.config.S3BucketName()
+	bucketName := s.config.Storage.BucketName
 	_, err = downloader.Download(ctx, tempFile, &s3.GetObjectInput{
 		Bucket: &bucketName,
 		Key:    &key,
@@ -111,6 +110,6 @@ func (s *S3Client) downloadLargeFile(ctx context.Context, key string, size int64
 		return nil, fmt.Errorf("failed to reopen downloaded file: %w", err)
 	}
 
-	level.Debug(s.logger).Log("msg", "large file download succeeded", "key", key, "path", tempPath)
+	s.logger.Debug("large file download succeeded", "key", key, "path", tempPath)
 	return readFile, nil
 }

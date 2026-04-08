@@ -5,8 +5,6 @@ package s3client
 
 import (
 	"context"
-
-	"github.com/go-kit/log/level"
 )
 
 // LatestSnapshotInfo contains information about the latest snapshot
@@ -25,13 +23,13 @@ func (s *S3Client) GetLatestSnapshot(ctx context.Context) (*LatestSnapshotInfo, 
 	}
 
 	if len(snapshots) == 0 {
-		level.Debug(s.logger).Log("msg", "no snapshots found")
+		s.logger.Debug("no snapshots found")
 		return &LatestSnapshotInfo{Found: false}, nil
 	}
 
 	// Get the latest snapshot (ListSnapshots returns them sorted newest first)
 	latest := snapshots[0]
-	level.Debug(s.logger).Log("msg", "found latest snapshot", "key", latest.Key, "revision", latest.Revision, "size", latest.Size)
+	s.logger.Debug("found latest snapshot", "key", latest.Key, "revision", latest.Revision, "size", latest.Size)
 
 	return &LatestSnapshotInfo{
 		Revision: latest.Revision,

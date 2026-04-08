@@ -1,7 +1,7 @@
 // Copyright 2025 Nadrama Pty Ltd
 // SPDX-License-Identifier: Apache-2.0
 
-package peerapi
+package primary
 
 import (
 	"bytes"
@@ -9,7 +9,6 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/go-kit/log/level"
 	"github.com/nadrama-com/netsy/internal/commonapi"
 	"github.com/nadrama-com/netsy/internal/localdb"
 	"github.com/nadrama-com/netsy/internal/proto"
@@ -53,7 +52,7 @@ var ErrUnsupported = errors.New("Unsupported request - netsy only implementes th
 //
 // Essentially the compare and failure condition for update and delete are the same, just success differs.
 // Note that create and update can have a lease ID specified, which gets recorded in the success operation.
-func (ps *PeerAPIServer) LeaderTxn(ctx context.Context, r *pb.TxnRequest) (record *proto.Record, parsed *pb.TxnResponse, err error) {
+func (ps *Server) LeaderTxn(ctx context.Context, r *pb.TxnRequest) (record *proto.Record, parsed *pb.TxnResponse, err error) {
 	var rangeResp *pb.RangeResponse
 	var inserted *proto.Record
 	// Serialize all leader transaction processing
@@ -67,11 +66,11 @@ func (ps *PeerAPIServer) LeaderTxn(ctx context.Context, r *pb.TxnRequest) (recor
 		return nil, nil, fmt.Errorf("error parsing request: %w", err)
 	}
 	// Use the instance ID from config as the leader ID
-	record.LeaderId = ps.config.InstanceID()
+	record.LeaderId = ps.config.NodeID
 	// Assign the next revision ID
 	record.Revision = ps.nextRevisionID.Load()
 	// Start transaction for S3 synchronous mode or use auto-commit
-	if ps.s3Client != nil && ps.config.ReplicationMode() == "synchronous" {
+	if ps.s3Client != nil && *ps.config.Replication.Quorum == 0 {
 		// Use transaction for synchronous S3 replication
 		tx, err := ps.db.BeginTx()
 		if err != nil {
@@ -84,7 +83,7 @@ func (ps *PeerAPIServer) LeaderTxn(ctx context.Context, r *pb.TxnRequest) (recor
 			len(r.Failure) == 1 {
 			tx.Rollback()
 			// Range on compare failure
-			level.Debug(ps.logger).Log("msg", "record insert error - executing failure op (range)", "error", err)
+			ps.logger.Debug("record insert error - executing failure op (range)", "error", err)
 			err = nil
 			rangeResp, err = commonapi.Range(ps.db, ctx, &pb.RangeRequest{
 				Key: []byte(record.Key),
@@ -93,7 +92,7 @@ func (ps *PeerAPIServer) LeaderTxn(ctx context.Context, r *pb.TxnRequest) (recor
 				return nil, nil, fmt.Errorf("error getting range response: %w", err)
 			}
 			// Don't upload to S3 on compare failure, just handle the range response
-		} else if err != nil {
+			} else if err != nil {
 			tx.Rollback()
 			return nil, nil, fmt.Errorf("error for %s: %w", record.Key, err)
 		} else {
@@ -122,7 +121,7 @@ func (ps *PeerAPIServer) LeaderTxn(ctx context.Context, r *pb.TxnRequest) (recor
 			errors.Is(err, localdb.ErrCompareRevisionFailed) &&
 			len(r.Failure) == 1 {
 			// Range on compare failure
-			level.Debug(ps.logger).Log("msg", "record insert error - executing failure op (range)", "error", err)
+			ps.logger.Debug("record insert error - executing failure op (range)", "error", err)
 			err = nil
 			rangeResp, err = commonapi.Range(ps.db, ctx, &pb.RangeRequest{
 				Key: []byte(record.Key),
@@ -130,7 +129,7 @@ func (ps *PeerAPIServer) LeaderTxn(ctx context.Context, r *pb.TxnRequest) (recor
 			if rangeResp == nil {
 				return nil, nil, fmt.Errorf("error getting range response: %w", err)
 			}
-		} else if inserted != nil {
+			} else if inserted != nil {
 			// Increment revision counter only after successful insert
 			ps.nextRevisionID.Add(1)
 			// Calculate record size for snapshot tracking

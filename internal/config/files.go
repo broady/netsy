@@ -19,40 +19,29 @@ type TLSFiles struct {
 
 func LoadTLSFiles(c *Config) (*TLSFiles, error) {
 	// Load server and client certificates and keys
-	serverCert, err := tls.LoadX509KeyPair(c.TLSServerCert(), c.TLSServerKey())
+	serverCert, err := tls.LoadX509KeyPair(c.TLSServerCert, c.TLSServerKey)
 	if err != nil {
-		return nil, fmt.Errorf("failed to load server cert %s and key %s: %w", c.TLSServerCert(), c.TLSServerKey(), err)
+		return nil, fmt.Errorf("failed to load server cert %s and key %s: %w", c.TLSServerCert, c.TLSServerKey, err)
 	}
-	clientCert, err := tls.LoadX509KeyPair(c.TLSClientCert(), c.TLSClientKey())
+	clientCert, err := tls.LoadX509KeyPair(c.TLSClientCert, c.TLSClientKey)
 	if err != nil {
-		return nil, fmt.Errorf("failed to load client cert %s and key %s: %w", c.TLSClientCert(), c.TLSClientKey(), err)
+		return nil, fmt.Errorf("failed to load client cert %s and key %s: %w", c.TLSClientCert, c.TLSClientKey, err)
 	}
-	// Load CA pools - note that these are probably the same
-	serverCA := x509.NewCertPool()
-	serverCAPem, err := os.ReadFile(c.TLSServerCA())
+
+	// Load single CA pool used for both server and client
+	caPool := x509.NewCertPool()
+	caPem, err := os.ReadFile(c.TLSCACert)
 	if err != nil {
-		return nil, fmt.Errorf("failed to read server CA file: %w", err)
+		return nil, fmt.Errorf("failed to read CA file: %w", err)
 	}
-	if !serverCA.AppendCertsFromPEM(serverCAPem) {
-		return nil, fmt.Errorf("failed to append server CA cert to pool: %w", err)
+	if !caPool.AppendCertsFromPEM(caPem) {
+		return nil, fmt.Errorf("failed to append CA cert to pool")
 	}
-	var clientCA *x509.CertPool
-	if c.TLSServerCA() == c.TLSClientCA() {
-		clientCA = serverCA
-	} else {
-		clientCA = x509.NewCertPool()
-		clientCAPem, err := os.ReadFile(c.TLSClientCA())
-		if err != nil {
-			return nil, fmt.Errorf("failed to read client CA file: %w", err)
-		}
-		if !clientCA.AppendCertsFromPEM(clientCAPem) {
-			return nil, fmt.Errorf("failed to append client CA cert to pool: %w", err)
-		}
-	}
+
 	return &TLSFiles{
-		ServerCA:   serverCA,
+		ServerCA:   caPool,
 		ServerCert: &serverCert,
-		ClientCA:   clientCA,
+		ClientCA:   caPool,
 		ClientCert: &clientCert,
 	}, nil
 }

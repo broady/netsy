@@ -5,65 +5,104 @@ package config
 
 import (
 	"fmt"
-	"reflect"
-
-	"github.com/go-playground/validator/v10"
-	"github.com/refreshjs/puidv7"
-	"github.com/spf13/viper"
+	"regexp"
+	"strings"
+	"time"
 )
 
-// validatePuidv7 can be used with the validator package
-func validatePuidv7(fl validator.FieldLevel) bool {
-	_, err := puidv7.Decode(fl.Field().String(), "")
-	if err != nil {
-		return false
+var identifierRegexp = regexp.MustCompile(`^[a-z0-9]([a-z0-9-]*[a-z0-9])?$`)
+
+// ValidateIdentifier checks that value is lowercase alphanumeric and hyphens,
+// with no leading/trailing/consecutive hyphens, max 32 chars.
+func ValidateIdentifier(value, fieldName string) error {
+	if value == "" {
+		return fmt.Errorf("%s is required", fieldName)
 	}
-	return true
+	if len(value) > 32 {
+		return fmt.Errorf("%s must be at most 32 characters", fieldName)
+	}
+	if strings.Contains(value, "--") {
+		return fmt.Errorf("%s must not contain consecutive hyphens", fieldName)
+	}
+	if !identifierRegexp.MatchString(value) {
+		return fmt.Errorf("%s must be lowercase alphanumeric with hyphens, no leading/trailing hyphens", fieldName)
+	}
+	return nil
 }
 
-// use a single instance of Validate, it caches struct info
-var validate *validator.Validate
-
-// Validate validates the config once it has been loaded using runtimeConfig
+// Validate validates all config fields and returns the first error found.
 func (c *Config) Validate() error {
-	// Parse viper values into a runtimeConfig struct
-	config := runtimeConfig{}
-	typeOf := reflect.TypeOf(config)
-	valueOf := reflect.ValueOf(&config).Elem()
-	for i := range typeOf.NumField() {
-		field := typeOf.Field(i)
-		viperKey, ok := field.Tag.Lookup("viper")
-		if !ok {
-			panic("Unexpected missing viper tag on Config struct")
-		}
-		fieldType := valueOf.Field(i).Type()
-		switch fieldType.Kind() {
-		case reflect.Bool:
-			valueOf.Field(i).SetBool(viper.GetBool(viperKey))
-		case reflect.String:
-			valueOf.Field(i).SetString(viper.GetString(viperKey))
-		case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
-			valueOf.Field(i).SetInt(viper.GetInt64(viperKey))
-		case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64:
-			valueOf.Field(i).SetUint(viper.GetUint64(viperKey))
-		case reflect.Float32, reflect.Float64:
-			valueOf.Field(i).SetFloat(viper.GetFloat64(viperKey))
-		default:
-			valueOf.Field(i).Set(reflect.ValueOf(viper.Get(viperKey)))
-		}
+	// node_id
+	if err := ValidateIdentifier(c.NodeID, "node_id"); err != nil {
+		return err
 	}
-	// Use validator to validate it
-	validate = validator.New(validator.WithRequiredStructEnabled())
-	if err := validate.RegisterValidation("puidv7", validatePuidv7); err != nil {
-		return fmt.Errorf("error registering puidv7 validator for config validation: %w", err)
+
+	// cluster_id
+	if err := ValidateIdentifier(c.ClusterID, "cluster_id"); err != nil {
+		return err
 	}
-	err := validate.Struct(config)
-	if err != nil {
-		msg := ""
-		for _, err := range err.(validator.ValidationErrors) {
-			msg += fmt.Sprintf("\n%s failed validation on '%s' validator.", err.Field(), err.Tag())
-		}
-		return fmt.Errorf("%s", msg)
+
+	// storage.bucket_name
+	if c.Storage.BucketName == "" {
+		return fmt.Errorf("storage.bucket_name is required")
 	}
+
+	// storage.provider
+	switch c.Storage.Provider {
+	case "s3", "gcs":
+		// valid
+	default:
+		return fmt.Errorf("storage.provider must be \"s3\" or \"gcs\", got %q", c.Storage.Provider)
+	}
+
+	// storage.encryption
+	switch c.Storage.Encryption {
+	case "provider-managed", "customer-managed":
+		// valid
+	default:
+		return fmt.Errorf("storage.encryption must be \"provider-managed\" or \"customer-managed\", got %q", c.Storage.Encryption)
+	}
+
+	// storage.kms_key_id required when encryption is customer-managed
+	if c.Storage.Encryption == "customer-managed" && c.Storage.KMSKeyID == "" {
+		return fmt.Errorf("storage.kms_key_id is required when storage.encryption is \"customer-managed\"")
+	}
+
+	// elector.degradation_count >= 1
+	if c.Elector.DegradationCount < 1 {
+		return fmt.Errorf("elector.degradation_count must be >= 1")
+	}
+
+	// replication.degradation_count >= 1
+	if c.Replication.DegradationCount < 1 {
+		return fmt.Errorf("replication.degradation_count must be >= 1")
+	}
+
+	// elector.heartbeat_interval > 0
+	if c.Elector.HeartbeatInterval.Duration <= 0 {
+		return fmt.Errorf("elector.heartbeat_interval must be > 0")
+	}
+
+	// elector.primary_prior_timeout >= degradation_count * heartbeat_interval
+	minPriorTimeout := time.Duration(c.Elector.DegradationCount) * c.Elector.HeartbeatInterval.Duration
+	if c.Elector.PrimaryPriorTimeout.Duration < minPriorTimeout {
+		return fmt.Errorf("elector.primary_prior_timeout (%s) must be >= elector.degradation_count (%d) * elector.heartbeat_interval (%s) = %s",
+			c.Elector.PrimaryPriorTimeout.Duration,
+			c.Elector.DegradationCount,
+			c.Elector.HeartbeatInterval.Duration,
+			minPriorTimeout,
+		)
+	}
+
+	// replication.heartbeat_interval > 0
+	if c.Replication.HeartbeatInterval.Duration <= 0 {
+		return fmt.Errorf("replication.heartbeat_interval must be > 0")
+	}
+
+	// replication.chunk_buffer.threshold_age_minutes > 0 when quorum != 0
+	if *c.Replication.Quorum != 0 && c.Replication.ChunkBuffer.ThresholdAgeMinutes <= 0 {
+		return fmt.Errorf("replication.chunk_buffer.threshold_age_minutes must be > 0 when replication.quorum != 0")
+	}
+
 	return nil
 }

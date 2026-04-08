@@ -1,13 +1,12 @@
 // Copyright 2025 Nadrama Pty Ltd
 // SPDX-License-Identifier: Apache-2.0
 
-package peerapi
+package primary
 
 import (
+	"log/slog"
 	"sync"
 	"sync/atomic"
-
-	"github.com/go-kit/log"
 
 	"github.com/nadrama-com/netsy/internal/config"
 	"github.com/nadrama-com/netsy/internal/localdb"
@@ -15,8 +14,8 @@ import (
 	"github.com/nadrama-com/netsy/internal/snapshot"
 )
 
-type PeerAPIServer struct {
-	logger         log.Logger
+type Server struct {
+	logger         *slog.Logger
 	config         *config.Config
 	db             localdb.Database
 	s3Client       *s3client.S3Client
@@ -31,8 +30,8 @@ type PeerAPIServer struct {
 	nextRevisionID atomic.Int64
 }
 
-func NewServer(logger log.Logger, conf *config.Config, db localdb.Database, snapshotWorker *snapshot.Worker, s3Client *s3client.S3Client) (*PeerAPIServer, error) {
-	ps := &PeerAPIServer{
+func NewServer(logger *slog.Logger, conf *config.Config, db localdb.Database, snapshotWorker *snapshot.Worker, s3Client *s3client.S3Client) (*Server, error) {
+	ps := &Server{
 		logger:         logger,
 		config:         conf,
 		db:             db,
@@ -51,7 +50,7 @@ func NewServer(logger log.Logger, conf *config.Config, db localdb.Database, snap
 
 // initializeRevisionCounter sets the next revision ID based on the highest
 // revision currently in the database. This should only be called on leader startup.
-func (ps *PeerAPIServer) initializeRevisionCounter() error {
+func (ps *Server) initializeRevisionCounter() error {
 	latestRevision, err := ps.db.LatestRevision()
 	if err != nil {
 		return err
@@ -59,5 +58,3 @@ func (ps *PeerAPIServer) initializeRevisionCounter() error {
 	ps.nextRevisionID.Store(latestRevision + 1)
 	return nil
 }
-
-
