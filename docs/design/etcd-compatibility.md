@@ -19,6 +19,7 @@ Unless otherwise noted below:
 
 - Netsy does not use Raft. It uses a Primary/Replica model with a separate Elector role.
 - Multi-node topology is service-discovery-driven rather than consensus-log-driven.
+- Netsy only supports single-key mutations per `Txn` request.
 - Cluster membership for etcd compatibility APIs is exposed through the Elector using `members.json` and active `nodes/` registrations.
 - Status information is local to the responding Node, even in a multi-node cluster.
 
@@ -74,6 +75,12 @@ Unless otherwise noted below:
 | Auth | `RoleRevokePermission` | Same as above. |
 
 ## Detailed Differences
+
+### `Txn` Supports Single-Key Operations Only
+
+Netsy only supports single-key mutations per `Txn` request. Each `Txn` produces at most one KV event at one revision. Multi-key operations within a single `Txn` are not supported.
+
+This is a deliberate simplification; Netsy assigns one revision per write operation and does not support the model used by etcd for multi-key transactions.
 
 ### Writes Use Primary/Elector Semantics, Not Raft
 

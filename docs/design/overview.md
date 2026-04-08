@@ -8,7 +8,7 @@ description: "Overview of Netsy terminology, requirements, leader election, and 
 
 ## Terminology
 
-- __Record__: a single key-value data entry, also known as an "etcd record", which has a revision integer, key string, value blob, and other metadata. Unique on revision+key.
+- __Record__: a single key-value data entry, also known as an "etcd record", which has a revision integer, key string, value blob, and other metadata. Unique on revision, as each revision produces exactly one Record.
 - __KV Data__: the collection of Records, also known as "etcd records".
 - __Node__: a single Netsy process. Each node has an identifier or "Node ID". The Node ID must be lowercase alphanumeric characters and hyphens only, with no leading, trailing, or consecutive hyphens, and a maximum of 32 characters.
 - __Cluster__: a collection of Nodes for a given KV Data store. Each Cluster has a "Cluster ID" following the same naming/validation rules as Node ID.
@@ -113,3 +113,4 @@ Each __Node__ has three state fields which can be read via the __Peer__ API:
 - [Failure Scenarios](failure-scenarios.md) – Data integrity and safety analysis across quorum configurations and cluster sizes.
 - [Watches & Compaction](watches-compaction.md) – Watch support & Compaction system design.
 - [Compatibility With etcd](etcd-compatibility.md) – Supported etcd RPCs, unsupported RPCs, and notes on compatibility differences.
+- [Observability](observability.md) – Metrics, structured logging, and debugging for Netsy clusters.

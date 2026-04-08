@@ -24,7 +24,11 @@ Exits with code `0` and a success message if valid, or code `1` with error detai
 
 ## Validation Rules
 
-Both `cluster_id` and `node_id` must be lowercase alphanumeric characters and hyphens only, with no leading, trailing, or consecutive hyphens, and a maximum of 32 characters.
+- Both `cluster_id` and `node_id` must be lowercase alphanumeric characters and hyphens only, with no leading, trailing, or consecutive hyphens, and a maximum of 32 characters.
+- `elector.degradation_count` must be >= 1
+- `replication.degradation_count` must be >= 1
+- `elector.primary_prior_timeout` must be >= `elector.degradation_count` × `elector.heartbeat_interval` — the Elector must not give up waiting for the previous Primary before it would even be marked Degraded
+- `replication.chunk_buffer.threshold_age_minutes` must be > 0 when `replication.quorum` is not `0` — without a time-based flush, a low-write cluster could hold unflushed data in memory indefinitely
 
 ## Per-Node Settings (environment variables)
 
@@ -103,7 +107,7 @@ netsy --config /etc/netsy/config.jsonc
   // Elector leader election and node lifecycle
   "elector": {
     "heartbeat_interval": "1s",       // how often each Node sends a heartbeat to the Elector
-    "degradation_timeout": "3s",      // 2 missed heartbeats within this window → Node marked Degraded
+    "degradation_count": 2,           // number of missed heartbeats before Node is marked Degraded
     "deregistration_timeout": "3m",   // auto-deregister Degraded nodes after this duration ("0" to disable)
     "primary_prior_timeout": "5s"     // how long to wait for the previous Primary during election before proceeding
   },
@@ -112,7 +116,7 @@ netsy --config /etc/netsy/config.jsonc
   "replication": {
     "quorum": -1,                     // -1 = majority, 0 = disabled (sync to object storage), positive int = static
     "heartbeat_interval": "500ms",    // standalone heartbeat to Primary when no Receipt sent within this window
-    "degradation_timeout": "2s",      // 2 missed heartbeats within this window → Replica excluded from quorum
+    "degradation_count": 2,           // number of missed Heartbeats/Receipts before Replica is excluded from quorum
     // Buffer for async object storage writes
     "chunk_buffer": {
       "threshold_size_mb": 4,         // flush chunk buffer to object storage when it exceeds this size
@@ -160,12 +164,12 @@ GCS example:
 | `storage.encryption` | `provider-managed` | Encryption mode: `provider-managed` or `customer-managed` |
 | `storage.kms_key_id` | — | KMS key identifier/resource when using `customer-managed` encryption |
 | `elector.heartbeat_interval` | — | How often each Node sends a heartbeat to the Elector |
-| `elector.degradation_timeout` | — | 2 missed heartbeats within this window marks Node as Degraded |
+| `elector.degradation_count` | `2` | Number of consecutive missed heartbeats before Node is marked Degraded |
 | `elector.deregistration_timeout` | `3m` | Auto-deregister Degraded nodes (`0` = disabled) |
 | `elector.primary_prior_timeout` | — | Timeout for contacting previous Primary during election |
 | `replication.quorum` | `-1` | Quorum config: `-1` (majority), `0` (disabled), positive int (static) |
 | `replication.heartbeat_interval` | — | Standalone heartbeat to Primary when no Receipt sent within window |
-| `replication.degradation_timeout` | — | 2 missed heartbeats within this window excludes Replica from quorum |
+| `replication.degradation_count` | `2` | Number of consecutive missed Heartbeats/Receipts before Replica is excluded from quorum |
 | `replication.chunk_buffer.threshold_size_mb` | — | Chunk Buffer size-based flush threshold |
 | `replication.chunk_buffer.threshold_age_minutes` | — | Chunk Buffer time-based flush threshold |
 | `snapshot.threshold_records` | `10000` | Snapshot after N records |
