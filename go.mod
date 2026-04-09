@@ -7,11 +7,11 @@ require (
 	github.com/aws/aws-sdk-go-v2 v1.36.6
 	github.com/aws/aws-sdk-go-v2/config v1.29.18
 	github.com/aws/aws-sdk-go-v2/credentials v1.17.71
-	github.com/aws/aws-sdk-go-v2/feature/s3/manager v1.17.85
 	github.com/aws/aws-sdk-go-v2/service/s3 v1.84.1
 	github.com/aws/aws-sdk-go-v2/service/sts v1.34.1
 	github.com/klauspost/compress v1.18.0
 	github.com/mattn/go-sqlite3 v1.14.28
+	github.com/nadrama-com/s3lect v1.0.2
 	github.com/spf13/cobra v1.9.1
 	github.com/tidwall/jsonc v0.3.3
 	go.etcd.io/etcd/api/v3 v3.5.21

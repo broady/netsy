@@ -4,11 +4,14 @@
 package storage
 
 import (
+	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
 	"os"
+	"strings"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	awsconfig "github.com/aws/aws-sdk-go-v2/config"
@@ -83,14 +86,129 @@ func (p *s3Provider) applyEncryption(input *s3.PutObjectInput) {
 	}
 }
 
-// Put writes data to the given key
-func (p *s3Provider) Put(ctx context.Context, key string, data io.Reader, size int64) error {
+// normalizeS3ETag strips surrounding quotes from an S3 ETag value.
+func normalizeS3ETag(etag string) string {
+	return strings.Trim(etag, `"`)
+}
+
+// quoteS3ETag ensures an ETag is surrounded by double quotes for S3 headers.
+func quoteS3ETag(etag string) string {
+	if strings.HasPrefix(etag, `"`) {
+		return etag
+	}
+	return `"` + etag + `"`
+}
+
+// Get retrieves an object and returns its contents and ETag.
+// Returns ErrNotFound when the key does not exist.
+func (p *s3Provider) Get(ctx context.Context, key string) ([]byte, string, error) {
+	bucketName := p.config.Storage.BucketName
+	output, err := p.client.GetObject(ctx, &s3.GetObjectInput{
+		Bucket: &bucketName,
+		Key:    &key,
+	})
+	if err != nil {
+		var nsk *types.NoSuchKey
+		if errors.As(err, &nsk) {
+			return nil, "", ErrNotFound
+		}
+		return nil, "", fmt.Errorf("failed to get object from S3: %w", err)
+	}
+	defer output.Body.Close()
+
+	data, err := io.ReadAll(output.Body)
+	if err != nil {
+		return nil, "", fmt.Errorf("failed to read object body from S3: %w", err)
+	}
+
+	etag := ""
+	if output.ETag != nil {
+		etag = normalizeS3ETag(*output.ETag)
+	}
+	return data, etag, nil
+}
+
+// Put stores an object in storage.
+func (p *s3Provider) Put(ctx context.Context, key string, data []byte) error {
 	bucketName := p.config.Storage.BucketName
 	storageClass := p.config.Storage.Class
 	input := &s3.PutObjectInput{
 		Bucket:        &bucketName,
 		Key:           &key,
-		Body:          data,
+		Body:          bytes.NewReader(data),
+		ContentLength: aws.Int64(int64(len(data))),
+		StorageClass:  types.StorageClass(storageClass),
+	}
+	p.applyEncryption(input)
+
+	p.logger.Debug("uploading to S3", "bucket", bucketName, "key", key, "size", len(data))
+	_, err := p.client.PutObject(ctx, input)
+	if err != nil {
+		return fmt.Errorf("failed to upload to S3: %w", err)
+	}
+
+	p.logger.Debug("object uploaded to S3", "key", key, "bucket", bucketName, "size", len(data))
+	return nil
+}
+
+// PutIfMatch stores an object only if the ETag matches.
+// Returns ErrPrecondition when the precondition is not met.
+func (p *s3Provider) PutIfMatch(ctx context.Context, key string, data []byte, etag string) error {
+	bucketName := p.config.Storage.BucketName
+	storageClass := p.config.Storage.Class
+	input := &s3.PutObjectInput{
+		Bucket:        &bucketName,
+		Key:           &key,
+		Body:          bytes.NewReader(data),
+		ContentLength: aws.Int64(int64(len(data))),
+		StorageClass:  types.StorageClass(storageClass),
+	}
+	p.applyEncryption(input)
+
+	if etag == "" {
+		input.IfNoneMatch = aws.String("*")
+	} else {
+		input.IfMatch = aws.String(quoteS3ETag(etag))
+	}
+
+	_, err := p.client.PutObject(ctx, input)
+	if err != nil {
+		if strings.Contains(err.Error(), "PreconditionFailed") || strings.Contains(err.Error(), "412") {
+			return ErrPrecondition
+		}
+		return fmt.Errorf("failed to upload to S3: %w", err)
+	}
+
+	p.logger.Debug("conditional object uploaded to S3", "key", key, "bucket", bucketName)
+	return nil
+}
+
+// GetStream retrieves an object as a stream.
+// Returns ErrNotFound when the key does not exist.
+func (p *s3Provider) GetStream(ctx context.Context, key string) (io.ReadCloser, error) {
+	bucketName := p.config.Storage.BucketName
+	output, err := p.client.GetObject(ctx, &s3.GetObjectInput{
+		Bucket: &bucketName,
+		Key:    &key,
+	})
+	if err != nil {
+		var nsk *types.NoSuchKey
+		if errors.As(err, &nsk) {
+			return nil, ErrNotFound
+		}
+		return nil, fmt.Errorf("failed to get object from S3: %w", err)
+	}
+	return output.Body, nil
+}
+
+// PutStream stores an object from a stream.
+func (p *s3Provider) PutStream(ctx context.Context, key string, r io.Reader, size int64) error {
+	bucketName := p.config.Storage.BucketName
+	storageClass := p.config.Storage.Class
+	input := &s3.PutObjectInput{
+		Bucket:        &bucketName,
+		Key:           &key,
+		Body:          r,
 		ContentLength: aws.Int64(size),
 		StorageClass:  types.StorageClass(storageClass),
 	}
@@ -104,47 +222,6 @@ func (p *s3Provider) Put(ctx context.Context, key string, data io.Reader, size i
 
 	p.logger.Debug("object uploaded to S3", "key", key, "bucket", bucketName, "size", size)
 	return nil
-}
-
-// PutIfMatch writes data conditionally
-func (p *s3Provider) PutIfMatch(ctx context.Context, key string, data io.Reader, size int64, etag string) error {
-	bucketName := p.config.Storage.BucketName
-	storageClass := p.config.Storage.Class
-	input := &s3.PutObjectInput{
-		Bucket:        &bucketName,
-		Key:           &key,
-		Body:          data,
-		ContentLength: aws.Int64(size),
-		StorageClass:  types.StorageClass(storageClass),
-	}
-	p.applyEncryption(input)
-
-	if etag == "" {
-		input.IfNoneMatch = aws.String("*")
-	} else {
-		input.IfMatch = aws.String(etag)
-	}
-
-	_, err := p.client.PutObject(ctx, input)
-	if err != nil {
-		return fmt.Errorf("failed to upload to S3: %w", err)
-	}
-
-	p.logger.Debug("conditional object uploaded to S3", "key", key, "bucket", bucketName)
-	return nil
-}
-
-// Get returns a reader for the object at the given key
-func (p *s3Provider) Get(ctx context.Context, key string) (io.ReadCloser, error) {
-	bucketName := p.config.Storage.BucketName
-	output, err := p.client.GetObject(ctx, &s3.GetObjectInput{
-		Bucket: &bucketName,
-		Key:    &key,
-	})
-	if err != nil {
-		return nil, fmt.Errorf("failed to get object from S3: %w", err)
-	}
-	return output.Body, nil
 }
 
 // Delete removes the object at the given key

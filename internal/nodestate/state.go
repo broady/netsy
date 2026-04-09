@@ -16,6 +16,7 @@ type State struct {
 	health  HealthState
 	elector ElectorState
 	primary PrimaryState
+	cluster ClusterState
 }
 
 // New returns a State initialised to Loading / Follower / Replica.

@@ -42,11 +42,11 @@ func (ps *Server) writeRecord(ctx context.Context, record *pb.Record) error {
 	data := buffer.Bytes()
 
 	// Upload with retry-once logic
-	err = ps.storageClient.PutIfMatch(ctx, key, bytes.NewReader(data), int64(len(data)), "")
+	err = ps.storageClient.PutIfMatch(ctx, key, data, "")
 	if err != nil {
 		ps.logger.Debug("first upload attempt failed, retrying once", "error", err, "key", key)
 		// Retry once on failure
-		err = ps.storageClient.PutIfMatch(ctx, key, bytes.NewReader(data), int64(len(data)), "")
+		err = ps.storageClient.PutIfMatch(ctx, key, data, "")
 		if err != nil {
 			return fmt.Errorf("object storage upload failed after retry: %w", err)
 		}

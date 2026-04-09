@@ -4,12 +4,15 @@
 package storage
 
 import (
+	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
 
 	gcsstorage "cloud.google.com/go/storage"
+	"google.golang.org/api/googleapi"
 	"google.golang.org/api/iterator"
 
 	"github.com/nadrama-com/netsy/internal/config"
@@ -39,8 +42,30 @@ func newGCSProvider(cfg *config.Config, logger *slog.Logger) (*gcsProvider, erro
 	}, nil
 }
 
-// Put writes data to the given key
-func (p *gcsProvider) Put(ctx context.Context, key string, data io.Reader, size int64) error {
+// Get retrieves an object and returns its contents and ETag.
+// Returns ErrNotFound when the key does not exist.
+func (p *gcsProvider) Get(ctx context.Context, key string) ([]byte, string, error) {
+	obj := p.client.Bucket(p.config.Storage.BucketName).Object(key)
+	reader, err := obj.NewReader(ctx)
+	if err != nil {
+		if errors.Is(err, gcsstorage.ErrObjectNotExist) {
+			return nil, "", ErrNotFound
+		}
+		return nil, "", fmt.Errorf("failed to get object from GCS: %w", err)
+	}
+	defer reader.Close()
+
+	data, err := io.ReadAll(reader)
+	if err != nil {
+		return nil, "", fmt.Errorf("failed to read object body from GCS: %w", err)
+	}
+
+	etag := fmt.Sprintf("%d", reader.Attrs.Generation)
+	return data, etag, nil
+}
+
+// Put stores an object in storage.
+func (p *gcsProvider) Put(ctx context.Context, key string, data []byte) error {
 	obj := p.client.Bucket(p.config.Storage.BucketName).Object(key)
 	w := obj.NewWriter(ctx)
 	w.StorageClass = p.config.Storage.Class
@@ -49,7 +74,7 @@ func (p *gcsProvider) Put(ctx context.Context, key string, data io.Reader, size 
 		w.KMSKeyName = p.config.Storage.KMSKeyID
 	}
 
-	if _, err := io.Copy(w, data); err != nil {
+	if _, err := io.Copy(w, bytes.NewReader(data)); err != nil {
 		w.Close()
 		return fmt.Errorf("failed to write data to GCS: %w", err)
 	}
@@ -62,8 +87,9 @@ func (p *gcsProvider) Put(ctx context.Context, key string, data io.Reader, size 
 	return nil
 }
 
-// PutIfMatch writes data conditionally
-func (p *gcsProvider) PutIfMatch(ctx context.Context, key string, data io.Reader, size int64, etag string) error {
+// PutIfMatch stores an object only if the ETag matches.
+// Returns ErrPrecondition when the precondition is not met.
+func (p *gcsProvider) PutIfMatch(ctx context.Context, key string, data []byte, etag string) error {
 	obj := p.client.Bucket(p.config.Storage.BucketName).Object(key)
 
 	if etag == "" {
@@ -83,7 +109,50 @@ func (p *gcsProvider) PutIfMatch(ctx context.Context, key string, data io.Reader
 		w.KMSKeyName = p.config.Storage.KMSKeyID
 	}
 
-	if _, err := io.Copy(w, data); err != nil {
+	if _, err := io.Copy(w, bytes.NewReader(data)); err != nil {
+		w.Close()
+		if errors.Is(err, gcsstorage.ErrObjectNotExist) {
+			return ErrPrecondition
+		}
+		return fmt.Errorf("failed to write data to GCS: %w", err)
+	}
+
+	if err := w.Close(); err != nil {
+		if isGCSPreconditionError(err) {
+			return ErrPrecondition
+		}
+		return fmt.Errorf("failed to close GCS writer: %w", err)
+	}
+
+	p.logger.Debug("conditional object uploaded to GCS", "key", key, "bucket", p.config.Storage.BucketName)
+	return nil
+}
+
+// GetStream retrieves an object as a stream.
+// Returns ErrNotFound when the key does not exist.
+func (p *gcsProvider) GetStream(ctx context.Context, key string) (io.ReadCloser, error) {
+	obj := p.client.Bucket(p.config.Storage.BucketName).Object(key)
+	reader, err := obj.NewReader(ctx)
+	if err != nil {
+		if errors.Is(err, gcsstorage.ErrObjectNotExist) {
+			return nil, ErrNotFound
+		}
+		return nil, fmt.Errorf("failed to get object from GCS: %w", err)
+	}
+	return reader, nil
+}
+
+// PutStream stores an object from a stream.
+func (p *gcsProvider) PutStream(ctx context.Context, key string, r io.Reader, size int64) error {
+	obj := p.client.Bucket(p.config.Storage.BucketName).Object(key)
+	w := obj.NewWriter(ctx)
+	w.StorageClass = p.config.Storage.Class
+
+	if p.config.Storage.Encryption == "customer-managed" && p.config.Storage.KMSKeyID != "" {
+		w.KMSKeyName = p.config.Storage.KMSKeyID
+	}
+
+	if _, err := io.Copy(w, r); err != nil {
 		w.Close()
 		return fmt.Errorf("failed to write data to GCS: %w", err)
 	}
@@ -92,17 +161,17 @@ func (p *gcsProvider) PutIfMatch(ctx context.Context, key string, data io.Reader
 		return fmt.Errorf("failed to close GCS writer: %w", err)
 	}
 
-	p.logger.Debug("conditional object uploaded to GCS", "key", key, "bucket", p.config.Storage.BucketName)
+	p.logger.Debug("object uploaded to GCS", "key", key, "bucket", p.config.Storage.BucketName)
 	return nil
 }
 
-// Get returns a reader for the object at the given key
-func (p *gcsProvider) Get(ctx context.Context, key string) (io.ReadCloser, error) {
-	reader, err := p.client.Bucket(p.config.Storage.BucketName).Object(key).NewReader(ctx)
-	if err != nil {
-		return nil, fmt.Errorf("failed to get object from GCS: %w", err)
+// isGCSPreconditionError returns true for GCS 412 precondition-failed errors.
+func isGCSPreconditionError(err error) bool {
+	var ge *googleapi.Error
+	if errors.As(err, &ge) {
+		return ge.Code == 412
 	}
-	return reader, nil
+	return false
 }
 
 // Delete removes the object at the given key

@@ -7,7 +7,6 @@ import (
 	"context"
 	"fmt"
 	"io"
-	"strings"
 	"testing"
 )
 
@@ -18,19 +17,29 @@ type recordingStorage struct {
 	listResult []ObjectInfo
 }
 
-func (r *recordingStorage) Put(ctx context.Context, key string, data io.Reader, size int64) error {
+func (r *recordingStorage) Get(ctx context.Context, key string) ([]byte, string, error) {
+	r.lastKey = key
+	return nil, "", nil
+}
+
+func (r *recordingStorage) Put(ctx context.Context, key string, data []byte) error {
 	r.lastKey = key
 	return nil
 }
 
-func (r *recordingStorage) PutIfMatch(ctx context.Context, key string, data io.Reader, size int64, etag string) error {
+func (r *recordingStorage) PutIfMatch(ctx context.Context, key string, data []byte, etag string) error {
 	r.lastKey = key
 	return nil
 }
 
-func (r *recordingStorage) Get(ctx context.Context, key string) (io.ReadCloser, error) {
+func (r *recordingStorage) GetStream(ctx context.Context, key string) (io.ReadCloser, error) {
 	r.lastKey = key
-	return io.NopCloser(strings.NewReader("")), nil
+	return io.NopCloser(nil), nil
+}
+
+func (r *recordingStorage) PutStream(ctx context.Context, key string, rdr io.Reader, size int64) error {
+	r.lastKey = key
+	return nil
 }
 
 func (r *recordingStorage) Delete(ctx context.Context, key string) error {
@@ -48,12 +57,12 @@ func TestScopedStorage_PrefixesKeys(t *testing.T) {
 	scoped := newScopedStorage(inner, "myprefix")
 	ctx := context.Background()
 
-	scoped.Put(ctx, "chunks/file.netsy", nil, 0)
+	scoped.Put(ctx, "chunks/file.netsy", nil)
 	if inner.lastKey != "myprefix/chunks/file.netsy" {
 		t.Errorf("Put: got key %q, want %q", inner.lastKey, "myprefix/chunks/file.netsy")
 	}
 
-	scoped.PutIfMatch(ctx, "chunks/file.netsy", nil, 0, "")
+	scoped.PutIfMatch(ctx, "chunks/file.netsy", nil, "")
 	if inner.lastKey != "myprefix/chunks/file.netsy" {
 		t.Errorf("PutIfMatch: got key %q, want %q", inner.lastKey, "myprefix/chunks/file.netsy")
 	}
@@ -106,14 +115,14 @@ func TestScopedStorage_TrailingSlash(t *testing.T) {
 
 	// Without trailing slash
 	scoped1 := newScopedStorage(inner, "prefix")
-	scoped1.Put(context.Background(), "key", nil, 0)
+	scoped1.Put(context.Background(), "key", nil)
 	if inner.lastKey != "prefix/key" {
 		t.Errorf("without slash: got %q, want %q", inner.lastKey, "prefix/key")
 	}
 
 	// With trailing slash
 	scoped2 := newScopedStorage(inner, "prefix/")
-	scoped2.Put(context.Background(), "key", nil, 0)
+	scoped2.Put(context.Background(), "key", nil)
 	if inner.lastKey != "prefix/key" {
 		t.Errorf("with slash: got %q, want %q", inner.lastKey, "prefix/key")
 	}
@@ -131,14 +140,20 @@ func TestScopedStorage_ErrorPropagation(t *testing.T) {
 
 type errorStorage struct{}
 
-func (e *errorStorage) Put(ctx context.Context, key string, data io.Reader, size int64) error {
+func (e *errorStorage) Get(ctx context.Context, key string) ([]byte, string, error) {
+	return nil, "", fmt.Errorf("get error")
+}
+func (e *errorStorage) Put(ctx context.Context, key string, data []byte) error {
 	return fmt.Errorf("put error")
 }
-func (e *errorStorage) PutIfMatch(ctx context.Context, key string, data io.Reader, size int64, etag string) error {
+func (e *errorStorage) PutIfMatch(ctx context.Context, key string, data []byte, etag string) error {
 	return fmt.Errorf("put error")
 }
-func (e *errorStorage) Get(ctx context.Context, key string) (io.ReadCloser, error) {
+func (e *errorStorage) GetStream(ctx context.Context, key string) (io.ReadCloser, error) {
 	return nil, fmt.Errorf("get error")
+}
+func (e *errorStorage) PutStream(ctx context.Context, key string, r io.Reader, size int64) error {
+	return fmt.Errorf("put error")
 }
 func (e *errorStorage) Delete(ctx context.Context, key string) error {
 	return fmt.Errorf("delete error")

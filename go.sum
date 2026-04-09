@@ -48,8 +48,6 @@ github.com/aws/aws-sdk-go-v2/credentials v1.17.71 h1:r2w4mQWnrTMJjOyIsZtGp3R3XGY
 github.com/aws/aws-sdk-go-v2/credentials v1.17.71/go.mod h1:E7VF3acIup4GB5ckzbKFrCK0vTvEQxOxgdq4U3vcMCY=
 github.com/aws/aws-sdk-go-v2/feature/ec2/imds v1.16.33 h1:D9ixiWSG4lyUBL2DDNK924Px9V/NBVpML90MHqyTADY=
 github.com/aws/aws-sdk-go-v2/feature/ec2/imds v1.16.33/go.mod h1:caS/m4DI+cij2paz3rtProRBI4s/+TCiWoaWZuQ9010=
-github.com/aws/aws-sdk-go-v2/feature/s3/manager v1.17.85 h1:AfpstoiaenxGSCUheWiicgZE5XXS5Fi4CcQ4PA/x+Qw=
-github.com/aws/aws-sdk-go-v2/feature/s3/manager v1.17.85/go.mod h1:HxiF0Fd6WHWjdjOffLkCauq7JqzWqMMq0iUVLS7cPQc=
 github.com/aws/aws-sdk-go-v2/internal/configsources v1.3.37 h1:osMWfm/sC/L4tvEdQ65Gri5ZZDCUpuYJZbTTDrsn4I0=
 github.com/aws/aws-sdk-go-v2/internal/configsources v1.3.37/go.mod h1:ZV2/1fbjOPr4G4v38G3Ww5TBT4+hmsK45s/rxu1fGy0=
 github.com/aws/aws-sdk-go-v2/internal/endpoints/v2 v2.6.37 h1:v+X21AvTb2wZ+ycg1gx+orkB/9U6L7AOp93R7qYxsxM=
@@ -227,6 +225,8 @@ github.com/modern-go/reflect2 v1.0.2 h1:xBagoLtFs94CBntxluKeaWgTMpvLxC4ur3nMaC9G
 github.com/modern-go/reflect2 v1.0.2/go.mod h1:yWuevngMOJpCy52FWWMvUC8ws7m/LJsjYzDa0/r8luk=
 github.com/mwitkow/go-conntrack v0.0.0-20161129095857-cc309e4a2223/go.mod h1:qRWi+5nqEBWmkhHvq77mSJWrCKwh8bxhgT7d/eI7P4U=
 github.com/mwitkow/go-conntrack v0.0.0-20190716064945-2f068394615f/go.mod h1:qRWi+5nqEBWmkhHvq77mSJWrCKwh8bxhgT7d/eI7P4U=
+github.com/nadrama-com/s3lect v1.0.2 h1:lsR2vo2Iaq4nrUU7tqyCcXDYDj5YCK6ARo3kDJ9whQk=
+github.com/nadrama-com/s3lect v1.0.2/go.mod h1:/OMyAIWYc+42JdnkHSQ6/kN37dvwh82K7mTnIWt632Y=
 github.com/opentracing/opentracing-go v1.1.0/go.mod h1:UkNAQd3GIcIGf0SeVgPpRdFStlNbqXla1AfSYxPUl2o=
 github.com/pkg/errors v0.8.0/go.mod h1:bwawxfHBFNV+L2hUp1rHADufV3IMtnDRdf1r5NINEl0=
 github.com/pkg/errors v0.8.1/go.mod h1:bwawxfHBFNV+L2hUp1rHADufV3IMtnDRdf1r5NINEl0=

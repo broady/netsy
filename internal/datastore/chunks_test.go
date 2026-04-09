@@ -18,16 +18,24 @@ type mockStorage struct {
 	listErr error
 }
 
-func (m *mockStorage) Put(ctx context.Context, key string, data io.Reader, size int64) error {
+func (m *mockStorage) Get(ctx context.Context, key string) ([]byte, string, error) {
+	return nil, "", fmt.Errorf("not implemented")
+}
+
+func (m *mockStorage) Put(ctx context.Context, key string, data []byte) error {
 	return nil
 }
 
-func (m *mockStorage) PutIfMatch(ctx context.Context, key string, data io.Reader, size int64, etag string) error {
+func (m *mockStorage) PutIfMatch(ctx context.Context, key string, data []byte, etag string) error {
 	return nil
 }
 
-func (m *mockStorage) Get(ctx context.Context, key string) (io.ReadCloser, error) {
+func (m *mockStorage) GetStream(ctx context.Context, key string) (io.ReadCloser, error) {
 	return nil, fmt.Errorf("not implemented")
+}
+
+func (m *mockStorage) PutStream(ctx context.Context, key string, data io.Reader, size int64) error {
+	return nil
 }
 
 func (m *mockStorage) Delete(ctx context.Context, key string) error {

@@ -19,6 +19,7 @@ import (
 	"github.com/nadrama-com/netsy/internal/clientapi"
 	"github.com/nadrama-com/netsy/internal/config"
 	"github.com/nadrama-com/netsy/internal/datastore"
+	"github.com/nadrama-com/netsy/internal/elector"
 	"github.com/nadrama-com/netsy/internal/healthserver"
 	"github.com/nadrama-com/netsy/internal/localdb"
 	"github.com/nadrama-com/netsy/internal/mtls"
@@ -143,6 +144,43 @@ func NewRootCmd() *cobra.Command {
 			jitterWaitThenExit(filteredLogger)
 		}
 
+		// Create root context for all background services
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+
+		// Create object storage client
+		storageClient, storageCleanup, err := storage.New(c, filteredLogger)
+		if err != nil {
+			filteredLogger.Error("Failed to create storage client", "error", err)
+			os.Exit(1)
+		}
+		defer storageCleanup()
+
+		// Start elector - s3lect election, health server, and elector service
+		electionRunner, err := elector.New(filteredLogger, c, state, storageClient, tlsFiles.ServerCert)
+		if err != nil {
+			filteredLogger.Error("Failed to create election runner", "error", err)
+			jitterWaitThenExit(filteredLogger)
+		}
+		if err := electionRunner.Start(ctx); err != nil {
+			filteredLogger.Error("Failed to start election runner", "error", err)
+			jitterWaitThenExit(filteredLogger)
+		}
+		defer electionRunner.Stop(ctx)
+		filteredLogger.Info("starting election (https) server...", "addr", c.BindElection)
+
+		// Wait for first election cycle to know the current Elector
+		electionStatus, err := electionRunner.WaitForFirstElection(ctx)
+		if err != nil {
+			filteredLogger.Error("Failed to complete first elector leader election cycle", "error", err)
+			jitterWaitThenExit(filteredLogger)
+		}
+		filteredLogger.Info("first elector leader election cycle complete",
+			"is_leader", electionStatus.IsLeader,
+			"leader_id", electionStatus.LeaderID,
+			"leader_addr", electionStatus.LeaderAddr,
+		)
+
 		// Configure signal handling for shutdown
 		shutdownErrsCh := make(chan error)
 		go func() {
@@ -167,17 +205,9 @@ func NewRootCmd() *cobra.Command {
 			jitterWaitThenExit(filteredLogger)
 		}
 
-		// Create storage client and get latest snapshot info
+		// Get latest snapshot info
 		var snapshotWorker *snapshot.Worker
 		var latestSnapshotInfo *datastore.LatestSnapshotInfo
-		storageClient, storageCleanup, err := storage.New(c, filteredLogger)
-		if err != nil {
-			filteredLogger.Error("Failed to create storage client", "error", err)
-			os.Exit(1)
-		}
-		defer storageCleanup()
-
-		// Get latest snapshot info once
 		latestSnapshotInfo, err = datastore.GetLatestSnapshot(context.Background(), storageClient)
 		if err != nil {
 			filteredLogger.Error("Failed to get latest snapshot info", "error", err)

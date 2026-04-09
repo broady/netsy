@@ -18,7 +18,7 @@ import (
 func Download(ctx context.Context, store storage.ObjectStorage, key string, size int64, dataDir string, tempFiles *[]string) (io.ReadCloser, error) {
 	const maxMemorySize = 2 * 1024 * 1024 // 2MB
 
-	reader, err := store.Get(ctx, key)
+	reader, err := store.GetStream(ctx, key)
 	if err != nil {
 		return nil, fmt.Errorf("failed to download file: %w", err)
 	}

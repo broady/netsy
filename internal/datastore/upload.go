@@ -24,7 +24,7 @@ func Upload(ctx context.Context, store storage.ObjectStorage, key, filePath stri
 		return fmt.Errorf("failed to stat file %s: %w", filePath, err)
 	}
 
-	if err := store.Put(ctx, key, file, fileInfo.Size()); err != nil {
+	if err := store.PutStream(ctx, key, file, fileInfo.Size()); err != nil {
 		return fmt.Errorf("failed to upload %s: %w", key, err)
 	}
 

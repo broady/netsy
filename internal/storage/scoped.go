@@ -22,16 +22,24 @@ func newScopedStorage(underlying ObjectStorage, prefix string) ObjectStorage {
 	return &scopedStorage{underlying: underlying, prefix: prefix}
 }
 
-func (s *scopedStorage) Put(ctx context.Context, key string, data io.Reader, size int64) error {
-	return s.underlying.Put(ctx, s.prefix+key, data, size)
-}
-
-func (s *scopedStorage) PutIfMatch(ctx context.Context, key string, data io.Reader, size int64, etag string) error {
-	return s.underlying.PutIfMatch(ctx, s.prefix+key, data, size, etag)
-}
-
-func (s *scopedStorage) Get(ctx context.Context, key string) (io.ReadCloser, error) {
+func (s *scopedStorage) Get(ctx context.Context, key string) ([]byte, string, error) {
 	return s.underlying.Get(ctx, s.prefix+key)
+}
+
+func (s *scopedStorage) Put(ctx context.Context, key string, data []byte) error {
+	return s.underlying.Put(ctx, s.prefix+key, data)
+}
+
+func (s *scopedStorage) PutIfMatch(ctx context.Context, key string, data []byte, etag string) error {
+	return s.underlying.PutIfMatch(ctx, s.prefix+key, data, etag)
+}
+
+func (s *scopedStorage) GetStream(ctx context.Context, key string) (io.ReadCloser, error) {
+	return s.underlying.GetStream(ctx, s.prefix+key)
+}
+
+func (s *scopedStorage) PutStream(ctx context.Context, key string, r io.Reader, size int64) error {
+	return s.underlying.PutStream(ctx, s.prefix+key, r, size)
 }
 
 func (s *scopedStorage) Delete(ctx context.Context, key string) error {
