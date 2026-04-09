@@ -1,4 +1,4 @@
-// Copyright 2025 Nadrama Pty Ltd
+// Copyright 2026 Nadrama Pty Ltd
 // SPDX-License-Identifier: Apache-2.0
 
 package cmd
@@ -20,8 +20,9 @@ import (
 	"github.com/nadrama-com/netsy/internal/clientapi"
 	"github.com/nadrama-com/netsy/internal/config"
 	"github.com/nadrama-com/netsy/internal/localdb"
-	"github.com/nadrama-com/netsy/internal/s3client"
+	"github.com/nadrama-com/netsy/internal/datastore"
 	"github.com/nadrama-com/netsy/internal/snapshot"
+	"github.com/nadrama-com/netsy/internal/storage"
 	"github.com/spf13/cobra"
 	"go.etcd.io/etcd/server/v3/embed"
 	"google.golang.org/grpc"
@@ -154,23 +155,24 @@ func NewRootCmd() *cobra.Command {
 			jitterWaitThenExit(filteredLogger)
 		}
 
-		// Create S3 client and get latest snapshot info
+		// Create storage client and get latest snapshot info
 		var snapshotWorker *snapshot.Worker
-		var latestSnapshotInfo *s3client.LatestSnapshotInfo
-		s3Client, err := s3client.New(c, filteredLogger)
+		var latestSnapshotInfo *datastore.LatestSnapshotInfo
+		storageClient, storageCleanup, err := storage.New(c, filteredLogger)
 		if err != nil {
-			filteredLogger.Error("Failed to create S3 client", "error", err)
+			filteredLogger.Error("Failed to create storage client", "error", err)
 			os.Exit(1)
 		}
+		defer storageCleanup()
 
 		// Get latest snapshot info once
-		latestSnapshotInfo, err = s3Client.GetLatestSnapshot(context.Background())
+		latestSnapshotInfo, err = datastore.GetLatestSnapshot(context.Background(), storageClient)
 		if err != nil {
 			filteredLogger.Error("Failed to get latest snapshot info", "error", err)
 			os.Exit(1)
 		}
 
-		snapshotWorker = snapshot.NewWorker(filteredLogger, c, db, s3Client)
+		snapshotWorker = snapshot.NewWorker(filteredLogger, c, db, storageClient)
 		snapshotWorker.InitializeWithSnapshot(latestSnapshotInfo)
 
 		// Ensure snapshot worker is stopped on shutdown
@@ -179,7 +181,7 @@ func NewRootCmd() *cobra.Command {
 			snapshotWorker.Stop()
 		}()
 
-		err = internal.Backfill(filteredLogger, db, c, latestRevision, latestSnapshotInfo, s3Client)
+		err = internal.Backfill(filteredLogger, db, c, latestRevision, latestSnapshotInfo, storageClient)
 		if err != nil {
 			filteredLogger.Error("clientServer.Backfill error", "error", err)
 			jitterWaitThenExit(filteredLogger)
@@ -206,7 +208,7 @@ func NewRootCmd() *cobra.Command {
 		}
 		gopts = append(gopts, grpc.Creds(credentials.NewTLS(&tlsConfig)))
 		grpcServer := grpc.NewServer(gopts...)
-		clientApiServer, err := clientapi.NewServer(filteredLogger, c, db, grpcServer, snapshotWorker, s3Client)
+		clientApiServer, err := clientapi.NewServer(filteredLogger, c, db, grpcServer, snapshotWorker, storageClient)
 		if err != nil {
 			filteredLogger.Error("Unable to create server client", "err", err)
 			os.Exit(1)

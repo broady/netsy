@@ -1,4 +1,4 @@
-// Copyright 2025 Nadrama Pty Ltd
+// Copyright 2026 Nadrama Pty Ltd
 // SPDX-License-Identifier: Apache-2.0
 
 package primary
@@ -10,15 +10,15 @@ import (
 
 	"github.com/nadrama-com/netsy/internal/config"
 	"github.com/nadrama-com/netsy/internal/localdb"
-	"github.com/nadrama-com/netsy/internal/s3client"
 	"github.com/nadrama-com/netsy/internal/snapshot"
+	"github.com/nadrama-com/netsy/internal/storage"
 )
 
 type Server struct {
 	logger         *slog.Logger
 	config         *config.Config
 	db             localdb.Database
-	s3Client       *s3client.S3Client
+	storageClient  storage.ObjectStorage
 	snapshotWorker *snapshot.Worker
 
 	// leaderTxnMutex serializes all transaction processing on the leader node
@@ -30,12 +30,12 @@ type Server struct {
 	nextRevisionID atomic.Int64
 }
 
-func NewServer(logger *slog.Logger, conf *config.Config, db localdb.Database, snapshotWorker *snapshot.Worker, s3Client *s3client.S3Client) (*Server, error) {
+func NewServer(logger *slog.Logger, conf *config.Config, db localdb.Database, snapshotWorker *snapshot.Worker, storageClient storage.ObjectStorage) (*Server, error) {
 	ps := &Server{
 		logger:         logger,
 		config:         conf,
 		db:             db,
-		s3Client:       s3Client,
+		storageClient:  storageClient,
 		snapshotWorker: snapshotWorker,
 	}
 

@@ -1,4 +1,4 @@
-// Copyright 2025 Nadrama Pty Ltd
+// Copyright 2026 Nadrama Pty Ltd
 // SPDX-License-Identifier: Apache-2.0
 
 package clientapi
@@ -10,8 +10,8 @@ import (
 	"github.com/nadrama-com/netsy/internal/config"
 	"github.com/nadrama-com/netsy/internal/localdb"
 	"github.com/nadrama-com/netsy/internal/primary"
-	"github.com/nadrama-com/netsy/internal/s3client"
 	"github.com/nadrama-com/netsy/internal/snapshot"
+	"github.com/nadrama-com/netsy/internal/storage"
 
 	pb "go.etcd.io/etcd/api/v3/etcdserverpb"
 	"google.golang.org/grpc"
@@ -48,12 +48,12 @@ type ClientAPIServer struct {
 	pb.UnimplementedAuthServer
 }
 
-func NewServer(logger *slog.Logger, conf *config.Config, db localdb.Database, grpcServer *grpc.Server, snapshotWorker *snapshot.Worker, s3Client *s3client.S3Client) (*ClientAPIServer, error) {
+func NewServer(logger *slog.Logger, conf *config.Config, db localdb.Database, grpcServer *grpc.Server, snapshotWorker *snapshot.Worker, storageClient storage.ObjectStorage) (*ClientAPIServer, error) {
 	var err error
 
 	// TODO: in future we will replace this with a peer server gRPC client
 	// when the Netsy server is not the leader
-	peerServer, err := primary.NewServer(logger, conf, db, snapshotWorker, s3Client)
+	peerServer, err := primary.NewServer(logger, conf, db, snapshotWorker, storageClient)
 	if err != nil {
 		return nil, fmt.Errorf("primary.NewServer error: %s", err)
 	}

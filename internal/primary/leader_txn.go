@@ -1,4 +1,4 @@
-// Copyright 2025 Nadrama Pty Ltd
+// Copyright 2026 Nadrama Pty Ltd
 // SPDX-License-Identifier: Apache-2.0
 
 package primary
@@ -69,9 +69,9 @@ func (ps *Server) LeaderTxn(ctx context.Context, r *pb.TxnRequest) (record *prot
 	record.LeaderId = ps.config.NodeID
 	// Assign the next revision ID
 	record.Revision = ps.nextRevisionID.Load()
-	// Start transaction for S3 synchronous mode or use auto-commit
-	if ps.s3Client != nil && *ps.config.Replication.Quorum == 0 {
-		// Use transaction for synchronous S3 replication
+	// Start transaction for synchronous object storage mode or use auto-commit
+	if *ps.config.Replication.Quorum == 0 {
+		// Use transaction for synchronous object storage replication
 		tx, err := ps.db.BeginTx()
 		if err != nil {
 			return nil, nil, fmt.Errorf("failed to begin transaction: %w", err)
@@ -91,16 +91,16 @@ func (ps *Server) LeaderTxn(ctx context.Context, r *pb.TxnRequest) (record *prot
 			if rangeResp == nil {
 				return nil, nil, fmt.Errorf("error getting range response: %w", err)
 			}
-			// Don't upload to S3 on compare failure, just handle the range response
-			} else if err != nil {
+			// Don't upload on compare failure, just handle the range response
+		} else if err != nil {
 			tx.Rollback()
 			return nil, nil, fmt.Errorf("error for %s: %w", record.Key, err)
 		} else {
-			// Upload to S3 within transaction boundary only on successful insert
-			err = ps.s3Client.WriteRecord(ctx, inserted)
+			// Upload to object storage within transaction boundary only on successful insert
+			err = ps.writeRecord(ctx, inserted)
 			if err != nil {
 				tx.Rollback()
-				return nil, nil, fmt.Errorf("S3 upload failed: %w", err)
+				return nil, nil, fmt.Errorf("object storage upload failed: %w", err)
 			}
 			// Commit transaction
 			err = tx.Commit()
@@ -115,7 +115,7 @@ func (ps *Server) LeaderTxn(ctx context.Context, r *pb.TxnRequest) (record *prot
 			ps.checkAndCreateSnapshot(inserted.Revision, recordSize)
 		}
 	} else {
-		// Just insert directly if S3 is not enabled
+		// Insert directly for non-synchronous replication modes
 		inserted, err = ps.db.InsertRecord(record, nil)
 		if err != nil &&
 			errors.Is(err, localdb.ErrCompareRevisionFailed) &&
@@ -129,7 +129,7 @@ func (ps *Server) LeaderTxn(ctx context.Context, r *pb.TxnRequest) (record *prot
 			if rangeResp == nil {
 				return nil, nil, fmt.Errorf("error getting range response: %w", err)
 			}
-			} else if inserted != nil {
+		} else if inserted != nil {
 			// Increment revision counter only after successful insert
 			ps.nextRevisionID.Add(1)
 			// Calculate record size for snapshot tracking

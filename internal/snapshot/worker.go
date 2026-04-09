@@ -1,4 +1,4 @@
-// Copyright 2025 Nadrama Pty Ltd
+// Copyright 2026 Nadrama Pty Ltd
 // SPDX-License-Identifier: Apache-2.0
 
 package snapshot
@@ -16,8 +16,9 @@ import (
 	"github.com/nadrama-com/netsy/internal/config"
 	"github.com/nadrama-com/netsy/internal/datafile"
 	"github.com/nadrama-com/netsy/internal/localdb"
+	"github.com/nadrama-com/netsy/internal/datastore"
 	"github.com/nadrama-com/netsy/internal/proto"
-	"github.com/nadrama-com/netsy/internal/s3client"
+	"github.com/nadrama-com/netsy/internal/storage"
 )
 
 // SnapshotRequest represents a request to potentially create a snapshot
@@ -29,40 +30,40 @@ type SnapshotRequest struct {
 
 // Worker handles snapshot creation in a separate goroutine
 type Worker struct {
-	logger    *slog.Logger
-	config    *config.Config
-	db        localdb.Database
-	s3Client  *s3client.S3Client
-	
+	logger        *slog.Logger
+	config        *config.Config
+	db            localdb.Database
+	storageClient storage.ObjectStorage
+
 	// Channel for receiving snapshot requests
 	requestCh chan SnapshotRequest
-	
+
 	// Snapshot state tracking
 	lastSnapshotRevision int64
 	lastSnapshotTime     time.Time
-	cumulativeSize       int64  // Cumulative size since last snapshot
-	stateMutex          sync.Mutex
-	
+	cumulativeSize       int64 // Cumulative size since last snapshot
+	stateMutex           sync.Mutex
+
 	// Prevents concurrent snapshot creation
 	snapshotMutex sync.Mutex
-	
+
 	// Context for shutdown
 	ctx    context.Context
 	cancel context.CancelFunc
 }
 
 // NewWorker creates a new snapshot worker
-func NewWorker(logger *slog.Logger, config *config.Config, db localdb.Database, s3Client *s3client.S3Client) *Worker {
+func NewWorker(logger *slog.Logger, config *config.Config, db localdb.Database, storageClient storage.ObjectStorage) *Worker {
 	ctx, cancel := context.WithCancel(context.Background())
-	
+
 	return &Worker{
-		logger:    logger,
-		config:    config,
-		db:        db,
-		s3Client:  s3Client,
-		requestCh: make(chan SnapshotRequest, 100), // Buffered channel to avoid blocking
-		ctx:       ctx,
-		cancel:    cancel,
+		logger:        logger,
+		config:        config,
+		db:            db,
+		storageClient: storageClient,
+		requestCh:     make(chan SnapshotRequest, 100), // Buffered channel to avoid blocking
+		ctx:           ctx,
+		cancel:        cancel,
 	}
 }
 
@@ -83,7 +84,7 @@ func (w *Worker) RequestSnapshot(revision int64, timestamp time.Time, recordSize
 		Timestamp:  timestamp,
 		RecordSize: recordSize,
 	}
-	
+
 	select {
 	case w.requestCh <- req:
 		// Request sent successfully
@@ -96,7 +97,7 @@ func (w *Worker) RequestSnapshot(revision int64, timestamp time.Time, recordSize
 // run is the main worker loop
 func (w *Worker) run() {
 	w.logger.Info("snapshot worker started")
-	
+
 	for {
 		select {
 		case <-w.ctx.Done():
@@ -110,15 +111,10 @@ func (w *Worker) run() {
 
 // processRequest handles a single snapshot request
 func (w *Worker) processRequest(req SnapshotRequest) {
-	// Skip if S3 is not enabled
-	if w.s3Client == nil {
-		return
-	}
-	
 	w.stateMutex.Lock()
 	// Add this record's size to cumulative size
 	w.cumulativeSize += req.RecordSize
-	
+
 	shouldCreate, reason := w.shouldCreateSnapshot(
 		req.Revision,
 		req.Timestamp,
@@ -126,22 +122,22 @@ func (w *Worker) processRequest(req SnapshotRequest) {
 		w.lastSnapshotRevision,
 		w.lastSnapshotTime,
 	)
-	
+
 	if shouldCreate {
 		// Update state and reset cumulative size
 		w.lastSnapshotRevision = req.Revision
 		w.lastSnapshotTime = req.Timestamp
-		w.cumulativeSize = 0  // Reset after snapshot
+		w.cumulativeSize = 0 // Reset after snapshot
 	}
 	w.stateMutex.Unlock()
-	
+
 	if !shouldCreate {
 		return
 	}
-	
+
 	w.logger.Info("snapshot thresholds met, creating snapshot",
 		"current_revision", req.Revision, "reason", reason)
-	
+
 	w.createSnapshot(req.Revision)
 }
 
@@ -240,31 +236,31 @@ func (w *Worker) createSnapshot(upToRevision int64) {
 	// Close temp file before upload
 	tempFile.Close()
 
-	// Upload snapshot to S3 (UploadFile will add the prefix)
-	snapshotKey := fmt.Sprintf("snapshots/%019d.netsy", upToRevision)
+	// Upload snapshot to object storage
+	snapshotKey := datastore.SnapshotKey(upToRevision)
 
-	w.logger.Info("uploading snapshot to S3", "key", snapshotKey, "file_path", tempFilePath)
+	w.logger.Info("uploading snapshot to object storage", "key", snapshotKey, "file_path", tempFilePath)
 
-	err = w.s3Client.UploadFile(w.ctx, snapshotKey, tempFilePath)
+	err = datastore.Upload(w.ctx, w.storageClient, snapshotKey, tempFilePath)
 	if err != nil {
-		w.logger.Error("failed to upload snapshot to S3", "key", snapshotKey, "file_path", tempFilePath, "error", err)
+		w.logger.Error("failed to upload snapshot to object storage", "key", snapshotKey, "file_path", tempFilePath, "error", err)
 		return
 	}
 
-	w.logger.Info("snapshot uploaded to S3 successfully", "revision", upToRevision, "records", len(records), "key", snapshotKey)
+	w.logger.Info("snapshot uploaded to object storage successfully", "revision", upToRevision, "records", len(records), "key", snapshotKey)
 
 	// Start cleanup of old chunk files
 	w.logger.Info("starting chunk file cleanup", "up_to_revision", upToRevision)
 
 	// List all chunk files that are covered by the snapshot (revision <= upToRevision)
-	chunks, err := w.s3Client.ListChunksForCleanup(w.ctx, upToRevision)
+	chunks, err := datastore.ListChunksForCleanup(w.ctx, w.storageClient, upToRevision)
 	if err != nil {
 		w.logger.Error("failed to list chunks for cleanup", "error", err)
 		return
 	}
 	deletedCount := 0
 	for _, chunk := range chunks {
-		err := w.s3Client.DeleteFile(w.ctx, chunk.Key)
+		err := w.storageClient.Delete(w.ctx, chunk.Key)
 		if err != nil {
 			w.logger.Warn("failed to delete chunk file", "key", chunk.Key, "error", err)
 			continue
@@ -307,16 +303,16 @@ func (w *Worker) writeSnapshotFile(file *os.File, records []*proto.Record, upToR
 }
 
 // InitializeWithSnapshot initializes the snapshot worker state from existing snapshot info
-func (w *Worker) InitializeWithSnapshot(snapshotInfo *s3client.LatestSnapshotInfo) {
+func (w *Worker) InitializeWithSnapshot(snapshotInfo *datastore.LatestSnapshotInfo) {
 	w.stateMutex.Lock()
 	defer w.stateMutex.Unlock()
-	
+
 	if snapshotInfo == nil || !snapshotInfo.Found {
 		// No existing snapshots, initialize with default state
 		w.lastSnapshotRevision = 0
 		w.lastSnapshotTime = time.Time{}
 		w.cumulativeSize = 0
-		
+
 		w.logger.Info("no existing snapshots found, initialized with default state")
 		return
 	}
@@ -324,7 +320,7 @@ func (w *Worker) InitializeWithSnapshot(snapshotInfo *s3client.LatestSnapshotInf
 	// Initialize from existing snapshot
 	w.lastSnapshotRevision = snapshotInfo.Revision
 	w.lastSnapshotTime = time.Now() // Use current time since we don't know exact creation time
-	w.cumulativeSize = 0 // Start tracking from zero
+	w.cumulativeSize = 0            // Start tracking from zero
 
 	w.logger.Info("initialized snapshot tracking from existing snapshot",
 		"latest_snapshot_revision", snapshotInfo.Revision)

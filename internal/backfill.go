@@ -1,4 +1,4 @@
-// Copyright 2025 Nadrama Pty Ltd
+// Copyright 2026 Nadrama Pty Ltd
 // SPDX-License-Identifier: Apache-2.0
 
 package internal
@@ -14,16 +14,17 @@ import (
 	"github.com/nadrama-com/netsy/internal/config"
 	"github.com/nadrama-com/netsy/internal/datafile"
 	"github.com/nadrama-com/netsy/internal/localdb"
+	"github.com/nadrama-com/netsy/internal/datastore"
 	pb "github.com/nadrama-com/netsy/internal/proto"
-	"github.com/nadrama-com/netsy/internal/s3client"
+	"github.com/nadrama-com/netsy/internal/storage"
 )
 
-// Backfill fetches the latest netsy data files from S3 and ensures they are
-// inserted into the local database.
-// If the latest revision = 0, it will first check for a snapshot and download that
-// if it exists.
+// Backfill fetches the latest netsy data files from object storage and ensures
+// they are inserted into the local database.
+// If the latest revision = 0, it will first check for a snapshot and download
+// that if it exists.
 // After that, it will iterate on finding any chunks, and insert each of those.
-func Backfill(logger *slog.Logger, db localdb.Database, cfg *config.Config, latestRevision int64, latestSnapshotInfo *s3client.LatestSnapshotInfo, s3Client *s3client.S3Client) error {
+func Backfill(logger *slog.Logger, db localdb.Database, cfg *config.Config, latestRevision int64, latestSnapshotInfo *datastore.LatestSnapshotInfo, storageClient storage.ObjectStorage) error {
 	ctx := context.Background()
 	var err error
 
@@ -43,7 +44,7 @@ func Backfill(logger *slog.Logger, db localdb.Database, cfg *config.Config, late
 	// Step 1: If database is empty (latestRevision == 0), try to download latest snapshot
 	if latestRevision == 0 && latestSnapshotInfo != nil && latestSnapshotInfo.Found {
 		logger.Info("database is empty, downloading latest snapshot", "key", latestSnapshotInfo.Key, "revision", latestSnapshotInfo.Revision)
-		err = downloadAndImportSnapshotFile(ctx, logger, db, s3Client, cfg, latestSnapshotInfo, &tempFiles)
+		err = downloadAndImportSnapshotFile(ctx, logger, db, storageClient, cfg, latestSnapshotInfo, &tempFiles)
 		if err != nil {
 			return fmt.Errorf("failed to download snapshot: %w", err)
 		}
@@ -57,7 +58,7 @@ func Backfill(logger *slog.Logger, db localdb.Database, cfg *config.Config, late
 	}
 
 	// Step 2: Find and download chunk files for revisions greater than latestRevision
-	err = downloadAndImportChunks(ctx, logger, db, s3Client, cfg, latestRevision, &tempFiles)
+	err = downloadAndImportChunks(ctx, logger, db, storageClient, cfg, latestRevision, &tempFiles)
 	if err != nil {
 		return fmt.Errorf("failed to download chunks: %w", err)
 	}
@@ -66,34 +67,14 @@ func Backfill(logger *slog.Logger, db localdb.Database, cfg *config.Config, late
 	return nil
 }
 
-func downloadAndImportSnapshotFile(ctx context.Context, logger *slog.Logger, db localdb.Database, s3Client *s3client.S3Client, cfg *config.Config, snapshotInfo *s3client.LatestSnapshotInfo, tempFiles *[]string) error {
+func downloadAndImportSnapshotFile(ctx context.Context, logger *slog.Logger, db localdb.Database, storageClient storage.ObjectStorage, cfg *config.Config, snapshotInfo *datastore.LatestSnapshotInfo, tempFiles *[]string) error {
 	// Download and import the snapshot
-	return downloadAndImportFile(ctx, logger, db, s3Client, cfg, snapshotInfo.Key, snapshotInfo.Size, pb.FileKind_KIND_SNAPSHOT, tempFiles)
+	return downloadAndImportFile(ctx, logger, db, storageClient, cfg, snapshotInfo.Key, snapshotInfo.Size, pb.FileKind_KIND_SNAPSHOT, tempFiles)
 }
 
-func downloadAndImportSnapshot(ctx context.Context, logger *slog.Logger, db localdb.Database, s3Client *s3client.S3Client, cfg *config.Config, tempFiles *[]string) error {
-	// List available snapshots
-	snapshots, err := s3Client.ListSnapshots(ctx)
-	if err != nil {
-		return fmt.Errorf("failed to list snapshots: %w", err)
-	}
-
-	if len(snapshots) == 0 {
-		logger.Info("no snapshot found")
-		return nil
-	}
-
-	// Get the latest snapshot (ListSnapshots returns them sorted newest first)
-	latest := snapshots[0]
-	logger.Info("found latest snapshot", "key", latest.Key, "revision", latest.Revision, "size", latest.Size)
-
-	// Download and import the snapshot
-	return downloadAndImportFile(ctx, logger, db, s3Client, cfg, latest.Key, latest.Size, pb.FileKind_KIND_SNAPSHOT, tempFiles)
-}
-
-func downloadAndImportChunks(ctx context.Context, logger *slog.Logger, db localdb.Database, s3Client *s3client.S3Client, cfg *config.Config, fromRevision int64, tempFiles *[]string) error {
+func downloadAndImportChunks(ctx context.Context, logger *slog.Logger, db localdb.Database, storageClient storage.ObjectStorage, cfg *config.Config, fromRevision int64, tempFiles *[]string) error {
 	// List available chunks greater than fromRevision
-	chunks, err := s3Client.ListChunks(ctx, fromRevision)
+	chunks, err := datastore.ListChunks(ctx, storageClient, fromRevision)
 	if err != nil {
 		return fmt.Errorf("failed to list chunks: %w", err)
 	}
@@ -107,7 +88,7 @@ func downloadAndImportChunks(ctx context.Context, logger *slog.Logger, db locald
 
 	// Download and import each chunk file (ListChunks returns them sorted oldest first)
 	for _, chunk := range chunks {
-		err := downloadAndImportFile(ctx, logger, db, s3Client, cfg, chunk.Key, chunk.Size, pb.FileKind_KIND_CHUNK, tempFiles)
+		err := downloadAndImportFile(ctx, logger, db, storageClient, cfg, chunk.Key, chunk.Size, pb.FileKind_KIND_CHUNK, tempFiles)
 		if err != nil {
 			return fmt.Errorf("failed to import chunk %s: %w", chunk.Key, err)
 		}
@@ -117,11 +98,11 @@ func downloadAndImportChunks(ctx context.Context, logger *slog.Logger, db locald
 }
 
 // downloadAndImportFile downloads and imports a file, automatically choosing the best strategy
-func downloadAndImportFile(ctx context.Context, logger *slog.Logger, db localdb.Database, s3Client *s3client.S3Client, cfg *config.Config, key string, size int64, expectedKind pb.FileKind, tempFiles *[]string) error {
+func downloadAndImportFile(ctx context.Context, logger *slog.Logger, db localdb.Database, storageClient storage.ObjectStorage, cfg *config.Config, key string, size int64, expectedKind pb.FileKind, tempFiles *[]string) error {
 	logger.Debug("downloading and importing file", "key", key, "size", size)
 
 	// Download the file using the appropriate strategy
-	reader, err := s3Client.DownloadFile(ctx, key, size, cfg.DataDir, tempFiles)
+	reader, err := datastore.Download(ctx, storageClient, key, size, cfg.DataDir, tempFiles)
 	if err != nil {
 		return fmt.Errorf("failed to download file: %w", err)
 	}

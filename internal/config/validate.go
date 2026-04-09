@@ -1,4 +1,4 @@
-// Copyright 2025 Nadrama Pty Ltd
+// Copyright 2026 Nadrama Pty Ltd
 // SPDX-License-Identifier: Apache-2.0
 
 package config
@@ -66,6 +66,26 @@ func (c *Config) Validate() error {
 	// storage.kms_key_id required when encryption is customer-managed
 	if c.Storage.Encryption == "customer-managed" && c.Storage.KMSKeyID == "" {
 		return fmt.Errorf("storage.kms_key_id is required when storage.encryption is \"customer-managed\"")
+	}
+
+	// Provider-specific storage.class validation — only classes suitable for
+	// active read/write workloads are permitted; archive and cold classes have
+	// retrieval delays or minimum storage durations that break backfill/recovery.
+	switch c.Storage.Provider {
+	case "s3":
+		switch c.Storage.Class {
+		case "STANDARD", "STANDARD_IA", "INTELLIGENT_TIERING":
+			// valid S3 storage classes
+		default:
+			return fmt.Errorf("storage.class %q is not a valid S3 storage class (must be STANDARD, STANDARD_IA, or INTELLIGENT_TIERING)", c.Storage.Class)
+		}
+	case "gcs":
+		switch c.Storage.Class {
+		case "STANDARD":
+			// valid GCS storage class
+		default:
+			return fmt.Errorf("storage.class %q is not a valid GCS storage class (must be STANDARD)", c.Storage.Class)
+		}
 	}
 
 	// elector.degradation_count >= 1
