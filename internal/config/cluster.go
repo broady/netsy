@@ -1,4 +1,4 @@
-// Copyright 2025 Nadrama Pty Ltd
+// Copyright 2026 Nadrama Pty Ltd
 // SPDX-License-Identifier: Apache-2.0
 
 package config
@@ -23,7 +23,7 @@ type ClusterConfig struct {
 }
 
 type StorageConfig struct {
-	Provider   string `json:"provider"`    // "s3" or "gcs", default "s3"
+	Provider   string `json:"provider"` // "s3" or "gcs", default "s3"
 	BucketName string `json:"bucket_name"`
 	KeyPrefix  string `json:"key_prefix"`
 	Class      string `json:"class"`      // default "STANDARD"
@@ -39,9 +39,9 @@ type ElectorConfig struct {
 }
 
 type ReplicationConfig struct {
-	Quorum            *int              `json:"quorum"`             // default -1; 0 = disabled, -1 = majority, positive = static
+	Quorum            *int              `json:"quorum"` // default -1; 0 = disabled, -1 = majority, positive = static
 	HeartbeatInterval Duration          `json:"heartbeat_interval"`
-	DegradationCount  int               `json:"degradation_count"`  // default 2
+	DegradationCount  int               `json:"degradation_count"` // default 2
 	ChunkBuffer       ChunkBufferConfig `json:"chunk_buffer"`
 }
 

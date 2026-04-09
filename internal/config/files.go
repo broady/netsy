@@ -1,4 +1,4 @@
-// Copyright 2025 Nadrama Pty Ltd
+// Copyright 2026 Nadrama Pty Ltd
 // SPDX-License-Identifier: Apache-2.0
 
 package config
@@ -17,15 +17,30 @@ type TLSFiles struct {
 	ClientCA   *x509.CertPool
 }
 
+// LoadTLSFiles loads the configured CA and certificate/key pairs and parses their leaf certificates for later validation.
 func LoadTLSFiles(c *Config) (*TLSFiles, error) {
 	// Load server and client certificates and keys
 	serverCert, err := tls.LoadX509KeyPair(c.TLSServerCert, c.TLSServerKey)
 	if err != nil {
 		return nil, fmt.Errorf("failed to load server cert %s and key %s: %w", c.TLSServerCert, c.TLSServerKey, err)
 	}
+	if len(serverCert.Certificate) == 0 {
+		return nil, fmt.Errorf("server certificate chain is empty")
+	}
+	serverCert.Leaf, err = x509.ParseCertificate(serverCert.Certificate[0])
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse server certificate %s: %w", c.TLSServerCert, err)
+	}
 	clientCert, err := tls.LoadX509KeyPair(c.TLSClientCert, c.TLSClientKey)
 	if err != nil {
 		return nil, fmt.Errorf("failed to load client cert %s and key %s: %w", c.TLSClientCert, c.TLSClientKey, err)
+	}
+	if len(clientCert.Certificate) == 0 {
+		return nil, fmt.Errorf("client certificate chain is empty")
+	}
+	clientCert.Leaf, err = x509.ParseCertificate(clientCert.Certificate[0])
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse client certificate %s: %w", c.TLSClientCert, err)
 	}
 
 	// Load single CA pool used for both server and client

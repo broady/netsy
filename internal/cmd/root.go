@@ -5,7 +5,6 @@ package cmd
 
 import (
 	"context"
-	"crypto/tls"
 	"fmt"
 	"log/slog"
 	"math/rand"
@@ -19,8 +18,9 @@ import (
 	"github.com/nadrama-com/netsy/internal/buildvars"
 	"github.com/nadrama-com/netsy/internal/clientapi"
 	"github.com/nadrama-com/netsy/internal/config"
-	"github.com/nadrama-com/netsy/internal/localdb"
 	"github.com/nadrama-com/netsy/internal/datastore"
+	"github.com/nadrama-com/netsy/internal/localdb"
+	"github.com/nadrama-com/netsy/internal/mtls"
 	"github.com/nadrama-com/netsy/internal/snapshot"
 	"github.com/nadrama-com/netsy/internal/storage"
 	"github.com/spf13/cobra"
@@ -51,6 +51,7 @@ func init() {
 	pflags.StringVar(&flagValidate, "validate", "", "Validate a config file and exit")
 }
 
+// NewRootCmd constructs the netsy CLI root command and wires startup behavior into its Run function.
 func NewRootCmd() *cobra.Command {
 	// Create logger
 	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{
@@ -117,18 +118,14 @@ func NewRootCmd() *cobra.Command {
 			filteredLogger.Error("Failed to load TLS files", "err", err)
 			jitterWaitThenExit(filteredLogger)
 		}
-
-		// Define TLS configuration for gRPC server
-		tlsConfig := tls.Config{
-			MinVersion:   tls.VersionTLS13,
-			MaxVersion:   tls.VersionTLS13,
-			CipherSuites: []uint16{tls.TLS_AES_256_GCM_SHA384},
-			RootCAs:      tlsFiles.ServerCA,
-			Certificates: []tls.Certificate{
-				*tlsFiles.ServerCert,
-			},
-			ClientAuth: tls.RequireAndVerifyClientCert,
-			ClientCAs:  tlsFiles.ClientCA,
+		if err := mtls.ValidateLocalNodeCertificates(c, tlsFiles); err != nil {
+			filteredLogger.Error("Invalid local TLS certificates", "err", err)
+			jitterWaitThenExit(filteredLogger)
+		}
+		tlsConfigClientAPI, err := mtls.NewServerTLSConfig(c, tlsFiles, mtls.RoleClient)
+		if err != nil {
+			filteredLogger.Error("Failed to construct client API TLS config", "err", err)
+			jitterWaitThenExit(filteredLogger)
 		}
 
 		// Configure signal handling for shutdown
@@ -206,7 +203,7 @@ func NewRootCmd() *cobra.Command {
 				Timeout: embed.DefaultGRPCKeepAliveTimeout,
 			}),
 		}
-		gopts = append(gopts, grpc.Creds(credentials.NewTLS(&tlsConfig)))
+		gopts = append(gopts, grpc.Creds(credentials.NewTLS(tlsConfigClientAPI)))
 		grpcServer := grpc.NewServer(gopts...)
 		clientApiServer, err := clientapi.NewServer(filteredLogger, c, db, grpcServer, snapshotWorker, storageClient)
 		if err != nil {

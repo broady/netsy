@@ -15,6 +15,7 @@ import (
 	"google.golang.org/grpc/status"
 )
 
+// Range executes the shared Range request logic against the local database.
 func Range(db localdb.Database, ctx context.Context, r *pb.RangeRequest) (*pb.RangeResponse, error) {
 	// check if an unsupported option was specified
 	if r.KeysOnly {

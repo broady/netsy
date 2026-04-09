@@ -30,6 +30,7 @@ type Server struct {
 	nextRevisionID atomic.Int64
 }
 
+// NewServer constructs the local Primary domain service and seeds its next revision counter.
 func NewServer(logger *slog.Logger, conf *config.Config, db localdb.Database, snapshotWorker *snapshot.Worker, storageClient storage.ObjectStorage) (*Server, error) {
 	ps := &Server{
 		logger:         logger,

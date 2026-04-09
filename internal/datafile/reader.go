@@ -1,4 +1,4 @@
-// Copyright 2025 Nadrama Pty Ltd
+// Copyright 2026 Nadrama Pty Ltd
 // SPDX-License-Identifier: Apache-2.0
 
 package datafile
@@ -37,6 +37,7 @@ type ReadResults struct {
 	LastRevision  int64
 }
 
+// NewReader opens a Netsy data file reader, validates the header, and prepares any decompression needed for records.
 func NewReader(buffer *bufio.Reader, expectKind *pb.FileKind) (*Reader, error) {
 	// Always read header uncompressed first
 	var header pb.FileHeader

@@ -1,4 +1,4 @@
-// Copyright 2025 Nadrama Pty Ltd
+// Copyright 2026 Nadrama Pty Ltd
 // SPDX-License-Identifier: Apache-2.0
 
 package datafile
@@ -30,14 +30,15 @@ type Writer struct {
 	lastCount     int64
 }
 
+// NewWriter creates a data-file writer using the package's default compression selection for the given kind.
 func NewWriter(buffer *bufio.Writer, kind pb.FileKind, recordsCount int64, leaderID string) (*Writer, error) {
 	return NewWriterWithCompression(buffer, kind, recordsCount, leaderID, nil)
 }
 
-// NewWriterWithSmartCompression creates a writer that determines compression based on content size for chunks
+// NewWriterWithSmartCompression creates a writer that chooses compression from the record payload size for chunk files.
 func NewWriterWithSmartCompression(buffer *bufio.Writer, kind pb.FileKind, records []*pb.Record, leaderID string) (*Writer, error) {
 	var compression pb.FileCompression
-	
+
 	if kind == pb.FileKind_KIND_SNAPSHOT {
 		// Always compress snapshots for internal Netsy use
 		compression = pb.FileCompression_COMPRESSION_ZSTD
@@ -47,7 +48,7 @@ func NewWriterWithSmartCompression(buffer *bufio.Writer, kind pb.FileKind, recor
 		for _, record := range records {
 			totalSize += len(record.Key) + len(record.Value)
 		}
-		
+
 		// Use compression for chunks > 4KB
 		if totalSize > 4096 {
 			compression = pb.FileCompression_COMPRESSION_ZSTD
@@ -55,10 +56,11 @@ func NewWriterWithSmartCompression(buffer *bufio.Writer, kind pb.FileKind, recor
 			compression = pb.FileCompression_COMPRESSION_NONE
 		}
 	}
-	
+
 	return NewWriterWithCompression(buffer, kind, int64(len(records)), leaderID, &compression)
 }
 
+// NewWriterWithCompression creates a data-file writer with an optional explicit compression override.
 func NewWriterWithCompression(buffer *bufio.Writer, kind pb.FileKind, recordsCount int64, leaderID string, forceCompression *pb.FileCompression) (*Writer, error) {
 	// Determine compression type
 	var compression pb.FileCompression

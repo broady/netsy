@@ -48,6 +48,7 @@ type ClientAPIServer struct {
 	pb.UnimplementedAuthServer
 }
 
+// NewServer registers the etcd-compatible Client API services on the provided gRPC server.
 func NewServer(logger *slog.Logger, conf *config.Config, db localdb.Database, grpcServer *grpc.Server, snapshotWorker *snapshot.Worker, storageClient storage.ObjectStorage) (*ClientAPIServer, error) {
 	var err error
 
