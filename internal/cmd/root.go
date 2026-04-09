@@ -19,8 +19,10 @@ import (
 	"github.com/nadrama-com/netsy/internal/clientapi"
 	"github.com/nadrama-com/netsy/internal/config"
 	"github.com/nadrama-com/netsy/internal/datastore"
+	"github.com/nadrama-com/netsy/internal/healthserver"
 	"github.com/nadrama-com/netsy/internal/localdb"
 	"github.com/nadrama-com/netsy/internal/mtls"
+	"github.com/nadrama-com/netsy/internal/nodestate"
 	"github.com/nadrama-com/netsy/internal/snapshot"
 	"github.com/nadrama-com/netsy/internal/storage"
 	"github.com/spf13/cobra"
@@ -111,6 +113,19 @@ func NewRootCmd() *cobra.Command {
 		if c.Verbose {
 			fmt.Println("Verbose output ENABLED")
 		}
+
+		// Initialise node state (Loading / Follower / Replica)
+		state := nodestate.New(filteredLogger)
+
+		// Start HTTP health server
+		healthSrv, err := healthserver.New(filteredLogger, c.BindHealth, state)
+		if err != nil {
+			filteredLogger.Error("Failed to start health server", "error", err)
+			os.Exit(1)
+		}
+		healthSrv.Start()
+		defer healthSrv.Close()
+		filteredLogger.Info("starting health (http) server...", "addr", c.BindHealth)
 
 		// Load certs and keys
 		tlsFiles, err := config.LoadTLSFiles(c)
