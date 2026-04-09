@@ -24,12 +24,14 @@ const lockfilePath = "leader/elector.json"
 // Runner manages the s3lect Elector, the dedicated HTTPS election health
 // server, and wires leadership change notifications into the local node state.
 type Runner struct {
-	logger    *slog.Logger
-	nodeID    string
-	peerAddr  string
-	elector   s3lect.Elector
-	healthSrv *s3lect.HealthServer
-	state     *nodestate.State
+	logger       *slog.Logger
+	nodeID       string
+	peerAddr     string
+	elector      s3lect.Elector
+	healthSrv    *s3lect.HealthServer
+	state        *nodestate.State
+	server       *Server
+	leaderCancel context.CancelFunc // cancels bootstrap and deregistration loop on leadership loss
 }
 
 // New creates a Runner that is ready to start. It configures the s3lect
@@ -93,6 +95,14 @@ func New(
 	}
 	r.healthSrv = healthSrv
 
+	r.server = NewServer(
+		logger.With("component", "elector-server"),
+		cfg.ClusterID,
+		store,
+		state,
+		cfg.Elector.DeregistrationTimeout.Duration,
+	)
+
 	return r, nil
 }
 
@@ -140,6 +150,12 @@ func (r *Runner) LeaderAddr() string {
 	return status.LeaderAddr
 }
 
+// ElectorServer returns the Elector gRPC server for registration with a
+// gRPC server externally.
+func (r *Runner) ElectorServer() *Server {
+	return r.server
+}
+
 // Stop gracefully stops the s3lect elector and health server. The elector
 // resigns leadership if currently held.
 func (r *Runner) Stop(ctx context.Context) {
@@ -161,11 +177,27 @@ func (r *Runner) onAcquireLeadership() error {
 		NodeID:            r.nodeID,
 		PeerAdvertiseAddr: r.peerAddr,
 	})
+
+	ctx, cancel := context.WithCancel(context.Background())
+	r.leaderCancel = cancel
+
+	go func() {
+		if err := r.server.Bootstrap(ctx); err != nil {
+			r.logger.Error("elector bootstrap failed", "error", err)
+		}
+	}()
+	go r.server.RunDeregistrationLoop(ctx)
+
 	return nil
 }
 
 func (r *Runner) onLoseLeadership() error {
 	r.logger.Info("lost elector leadership")
+	if r.leaderCancel != nil {
+		r.leaderCancel()
+		r.leaderCancel = nil
+	}
+	r.server.nodeMap.Reset()
 	if err := r.state.SetElector(nodestate.ElectorFollower); err != nil {
 		r.logger.Error("failed to transition elector state to follower", "error", err)
 	}

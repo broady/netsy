@@ -10,121 +10,78 @@ import (
 	"testing"
 )
 
-// recordingStorage records which keys were passed to each method
-type recordingStorage struct {
-	lastKey    string
-	lastPrefix string
-	listResult []ObjectInfo
-}
-
-func (r *recordingStorage) Get(ctx context.Context, key string) ([]byte, string, error) {
-	r.lastKey = key
-	return nil, "", nil
-}
-
-func (r *recordingStorage) Put(ctx context.Context, key string, data []byte) error {
-	r.lastKey = key
-	return nil
-}
-
-func (r *recordingStorage) PutIfMatch(ctx context.Context, key string, data []byte, etag string) error {
-	r.lastKey = key
-	return nil
-}
-
-func (r *recordingStorage) GetStream(ctx context.Context, key string) (io.ReadCloser, error) {
-	r.lastKey = key
-	return io.NopCloser(nil), nil
-}
-
-func (r *recordingStorage) PutStream(ctx context.Context, key string, rdr io.Reader, size int64) error {
-	r.lastKey = key
-	return nil
-}
-
-func (r *recordingStorage) Delete(ctx context.Context, key string) error {
-	r.lastKey = key
-	return nil
-}
-
-func (r *recordingStorage) List(ctx context.Context, prefix string) ([]ObjectInfo, error) {
-	r.lastPrefix = prefix
-	return r.listResult, nil
-}
-
 func TestScopedStorage_PrefixesKeys(t *testing.T) {
-	inner := &recordingStorage{}
+	inner := NewMemoryStore()
 	scoped := newScopedStorage(inner, "myprefix")
 	ctx := context.Background()
 
-	scoped.Put(ctx, "chunks/file.netsy", nil)
-	if inner.lastKey != "myprefix/chunks/file.netsy" {
-		t.Errorf("Put: got key %q, want %q", inner.lastKey, "myprefix/chunks/file.netsy")
+	scoped.Put(ctx, "chunks/file.netsy", []byte("data"))
+	if _, _, err := inner.Get(ctx, "myprefix/chunks/file.netsy"); err != nil {
+		t.Errorf("Put: expected data at prefixed key, got error: %v", err)
 	}
 
-	scoped.PutIfMatch(ctx, "chunks/file.netsy", nil, "")
-	if inner.lastKey != "myprefix/chunks/file.netsy" {
-		t.Errorf("PutIfMatch: got key %q, want %q", inner.lastKey, "myprefix/chunks/file.netsy")
+	scoped.PutIfMatch(ctx, "new/key", []byte("value"), "")
+	if _, _, err := inner.Get(ctx, "myprefix/new/key"); err != nil {
+		t.Errorf("PutIfMatch: expected data at prefixed key, got error: %v", err)
 	}
 
-	scoped.Get(ctx, "snapshots/file.netsy")
-	if inner.lastKey != "myprefix/snapshots/file.netsy" {
-		t.Errorf("Get: got key %q, want %q", inner.lastKey, "myprefix/snapshots/file.netsy")
+	data, _, err := scoped.Get(ctx, "chunks/file.netsy")
+	if err != nil {
+		t.Errorf("Get: unexpected error: %v", err)
+	}
+	if string(data) != "data" {
+		t.Errorf("Get: got %q, want %q", data, "data")
 	}
 
-	scoped.Delete(ctx, "nodes/node.json")
-	if inner.lastKey != "myprefix/nodes/node.json" {
-		t.Errorf("Delete: got key %q, want %q", inner.lastKey, "myprefix/nodes/node.json")
+	scoped.Delete(ctx, "chunks/file.netsy")
+	if _, _, err := inner.Get(ctx, "myprefix/chunks/file.netsy"); err != ErrNotFound {
+		t.Errorf("Delete: expected key to be removed, got err=%v", err)
 	}
 }
 
 func TestScopedStorage_ListPrefixesAndStrips(t *testing.T) {
-	inner := &recordingStorage{
-		listResult: []ObjectInfo{
-			{Key: "myprefix/chunks/0001/0000000000000000001.netsy", Size: 100},
-			{Key: "myprefix/chunks/0002/0000000000000000002.netsy", Size: 200},
-		},
-	}
+	inner := NewMemoryStore()
 	scoped := newScopedStorage(inner, "myprefix")
 	ctx := context.Background()
+
+	inner.Put(ctx, "myprefix/chunks/0001.netsy", []byte("a"))
+	inner.Put(ctx, "myprefix/chunks/0002.netsy", []byte("bb"))
+	inner.Put(ctx, "other/chunks/0003.netsy", []byte("ccc"))
 
 	results, err := scoped.List(ctx, "chunks/")
 	if err != nil {
 		t.Fatalf("List: unexpected error: %v", err)
 	}
-
-	if inner.lastPrefix != "myprefix/chunks/" {
-		t.Errorf("List: underlying got prefix %q, want %q", inner.lastPrefix, "myprefix/chunks/")
-	}
-
 	if len(results) != 2 {
 		t.Fatalf("List: got %d results, want 2", len(results))
 	}
 
-	// Keys should have prefix stripped
-	if results[0].Key != "chunks/0001/0000000000000000001.netsy" {
-		t.Errorf("List: results[0].Key = %q, want prefix stripped", results[0].Key)
-	}
-	if results[1].Key != "chunks/0002/0000000000000000002.netsy" {
-		t.Errorf("List: results[1].Key = %q, want prefix stripped", results[1].Key)
+	for _, r := range results {
+		if r.Key != "chunks/0001.netsy" && r.Key != "chunks/0002.netsy" {
+			t.Errorf("List: unexpected key %q (prefix should be stripped)", r.Key)
+		}
 	}
 }
 
 func TestScopedStorage_TrailingSlash(t *testing.T) {
-	inner := &recordingStorage{}
+	inner := NewMemoryStore()
+	ctx := context.Background()
 
 	// Without trailing slash
 	scoped1 := newScopedStorage(inner, "prefix")
-	scoped1.Put(context.Background(), "key", nil)
-	if inner.lastKey != "prefix/key" {
-		t.Errorf("without slash: got %q, want %q", inner.lastKey, "prefix/key")
+	scoped1.Put(ctx, "key", []byte("v1"))
+	if _, _, err := inner.Get(ctx, "prefix/key"); err != nil {
+		t.Errorf("without slash: expected data at prefix/key, got error: %v", err)
 	}
 
-	// With trailing slash
+	// With trailing slash — same result
 	scoped2 := newScopedStorage(inner, "prefix/")
-	scoped2.Put(context.Background(), "key", nil)
-	if inner.lastKey != "prefix/key" {
-		t.Errorf("with slash: got %q, want %q", inner.lastKey, "prefix/key")
+	data, _, err := scoped2.Get(ctx, "key")
+	if err != nil {
+		t.Errorf("with slash: unexpected error: %v", err)
+	}
+	if string(data) != "v1" {
+		t.Errorf("with slash: got %q, want %q", data, "v1")
 	}
 }
 
@@ -140,24 +97,24 @@ func TestScopedStorage_ErrorPropagation(t *testing.T) {
 
 type errorStorage struct{}
 
-func (e *errorStorage) Get(ctx context.Context, key string) ([]byte, string, error) {
+func (e *errorStorage) Get(_ context.Context, _ string) ([]byte, string, error) {
 	return nil, "", fmt.Errorf("get error")
 }
-func (e *errorStorage) Put(ctx context.Context, key string, data []byte) error {
+func (e *errorStorage) Put(_ context.Context, _ string, _ []byte) error {
 	return fmt.Errorf("put error")
 }
-func (e *errorStorage) PutIfMatch(ctx context.Context, key string, data []byte, etag string) error {
+func (e *errorStorage) PutIfMatch(_ context.Context, _ string, _ []byte, _ string) error {
 	return fmt.Errorf("put error")
 }
-func (e *errorStorage) GetStream(ctx context.Context, key string) (io.ReadCloser, error) {
+func (e *errorStorage) GetStream(_ context.Context, _ string) (io.ReadCloser, error) {
 	return nil, fmt.Errorf("get error")
 }
-func (e *errorStorage) PutStream(ctx context.Context, key string, r io.Reader, size int64) error {
+func (e *errorStorage) PutStream(_ context.Context, _ string, _ io.Reader, _ int64) error {
 	return fmt.Errorf("put error")
 }
-func (e *errorStorage) Delete(ctx context.Context, key string) error {
+func (e *errorStorage) Delete(_ context.Context, _ string) error {
 	return fmt.Errorf("delete error")
 }
-func (e *errorStorage) List(ctx context.Context, prefix string) ([]ObjectInfo, error) {
+func (e *errorStorage) List(_ context.Context, _ string) ([]ObjectInfo, error) {
 	return nil, fmt.Errorf("list error")
 }
