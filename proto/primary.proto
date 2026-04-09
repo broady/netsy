@@ -1,0 +1,42 @@
+// Copyright 2026 Nadrama Pty Ltd
+// SPDX-License-Identifier: Apache-2.0
+
+syntax = "proto3";
+
+package netsy;
+
+import "google/protobuf/empty.proto";
+import "proto/record.proto";
+import "proto/state.proto";
+
+option go_package = "github.com/nadrama-com/netsy/internal/proto";
+
+// Primary service — hosted by the Primary Node for replication streaming
+// and standalone heartbeat collection from Replicas.
+service Primary {
+  rpc Follow(stream ReplicaMessage) returns (stream PrimaryMessage);
+  rpc SendHeartbeat(NodeState) returns (google.protobuf.Empty);
+}
+
+// Initial is the first message the Primary sends on a new Follow stream,
+// providing the Replica with the current committed and compaction revisions.
+message Initial {
+  int64 committed_revision = 1;
+  int64 compaction_revision = 2; // 0 if no Compaction Revision accepted yet
+}
+
+// PrimaryMessage is sent from Primary to Replica on the replication stream.
+message PrimaryMessage {
+  oneof payload {
+    Initial initial = 1;
+    Record record = 2;
+    int64 commit = 3;  // committed_revision
+    int64 compact = 4; // compaction_revision
+  }
+}
+
+// ReplicaMessage is sent from Replica to Primary on the replication stream.
+message ReplicaMessage {
+  int64 revision = 1;      // the revision being receipted
+  NodeState heartbeat = 2; // embedded heartbeat
+}

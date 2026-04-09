@@ -1,0 +1,42 @@
+// Copyright 2026 Nadrama Pty Ltd
+// SPDX-License-Identifier: Apache-2.0
+
+syntax = "proto3";
+
+package netsy;
+
+import "google/protobuf/empty.proto";
+import "proto/state.proto";
+
+option go_package = "github.com/nadrama-com/netsy/internal/proto";
+
+// Elector service — hosted by the Elector Node for registration,
+// cluster state queries, and heartbeat collection.
+service Elector {
+  rpc RegisterNode(RegisterNodeRequest) returns (RegisterNodeResponse);
+  rpc DeregisterNode(DeregisterNodeRequest) returns (google.protobuf.Empty);
+  rpc GetClusterState(google.protobuf.Empty) returns (ClusterState);
+  rpc SendHeartbeat(NodeState) returns (google.protobuf.Empty);
+}
+
+// RegisterNodeRequest is sent by a Node to the Elector during startup
+// to join the cluster and receive a stable etcd member ID.
+message RegisterNodeRequest {
+  string node_id = 1;
+  string client_advertise_address = 2;
+  string peer_advertise_address = 3;
+}
+
+// RegisterNodeResponse returns the assigned stable etcd member ID and the
+// authoritative cluster topology so the Node can immediately connect to
+// the current Primary.
+message RegisterNodeResponse {
+  uint64 member_id = 1;
+  ClusterState cluster_state = 2; // authoritative initial topology from the Elector
+}
+
+// DeregisterNodeRequest is sent by a Node to the Elector during graceful
+// shutdown or by the Elector itself after a deregistration timeout.
+message DeregisterNodeRequest {
+  string node_id = 1;
+}

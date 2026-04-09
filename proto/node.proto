@@ -1,0 +1,39 @@
+// Copyright 2026 Nadrama Pty Ltd
+// SPDX-License-Identifier: Apache-2.0
+
+syntax = "proto3";
+
+package netsy;
+
+import "google/protobuf/empty.proto";
+import "proto/state.proto";
+
+option go_package = "github.com/nadrama-com/netsy/internal/proto";
+
+// Node service — hosted by every Node, called by the Elector and Primary
+// for cluster state pushes, node state queries, and compaction coordination.
+service Node {
+  rpc PushClusterState(ClusterState) returns (google.protobuf.Empty);
+  rpc GetNodeState(google.protobuf.Empty) returns (NodeState);
+  rpc GetGlobalMinWatchRevision(google.protobuf.Empty) returns (MinWatchRevisionResponse);
+  rpc SendCompactionNotice(CompactionNotice) returns (CompactionNoticeResponse);
+}
+
+// MinWatchRevisionResponse returns the lowest revision held by any active
+// Watch on this Node. Used by the Primary to compute a safe compaction point.
+message MinWatchRevisionResponse {
+  int64 min_revision = 1; // if no active Watches exist, return current committed_revision
+}
+
+// CompactionNotice is sent by the Primary to every Node proposing a new
+// compaction revision. Each Node must atomically validate that no active
+// Watch would be invalidated before confirming.
+message CompactionNotice {
+  int64 compaction_revision = 1;
+}
+
+// CompactionNoticeResponse indicates whether the Node accepted the proposed
+// compaction revision. Rejection means an active Watch exists below it.
+message CompactionNoticeResponse {
+  bool confirmed = 1; // confirms the Node has accepted the proposed compaction revision
+}

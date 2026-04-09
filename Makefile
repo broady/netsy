@@ -1,4 +1,4 @@
-# Copyright 2025 Nadrama Pty Ltd
+# Copyright 2026 Nadrama Pty Ltd
 # SPDX-License-Identifier: Apache-2.0
 
 BINDIR=bin
@@ -68,7 +68,9 @@ build:
 proto:
 	protoc -I=$(CURRENT) \
 	       --go_out=$(CURRENT)internal \
-	       --go_opt=paths=source_relative $(CURRENT)proto/*.proto
+	       --go_opt=paths=source_relative \
+	       --go-grpc_out=$(CURRENT)internal \
+	       --go-grpc_opt=paths=source_relative $(CURRENT)proto/*.proto
 
 clean:
 	rm -rf $(BINDIR)

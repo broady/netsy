@@ -1,0 +1,59 @@
+// Copyright 2026 Nadrama Pty Ltd
+// SPDX-License-Identifier: Apache-2.0
+
+syntax = "proto3";
+
+package netsy;
+
+option go_package = "github.com/nadrama-com/netsy/internal/proto";
+
+// Shared enums and messages used across Elector, Node, and Primary services.
+
+// HealthState represents the health of a Node.
+enum HealthState {
+  HEALTH_UNKNOWN = 0;
+  HEALTH_LOADING = 1;
+  HEALTH_HEALTHY = 2;
+  HEALTH_DEGRADED = 3;
+}
+
+// ElectorState represents whether a Node is the cluster Elector.
+enum ElectorState {
+  ELECTOR_UNKNOWN = 0;
+  ELECTOR_FOLLOWER = 1;
+  ELECTOR_LEADER = 2;
+}
+
+// PrimaryState represents a Node's role relative to the Primary.
+enum PrimaryState {
+  PRIMARY_UNKNOWN = 0;
+  PRIMARY_REPLICA = 1;
+  PRIMARY_STARTING = 2;
+  PRIMARY_ACTIVE = 3;
+  PRIMARY_DRAINING = 4;
+}
+
+// NodeState is the full state triple carried in Heartbeats and Receipts,
+// and returned by GetNodeState during election.
+message NodeState {
+  string node_id = 1;
+  HealthState health_state = 2;
+  ElectorState elector_state = 3;
+  PrimaryState primary_state = 4;
+  int64 latest_revision = 5;
+  int64 start_time = 6; // used during election tiebreaker
+}
+
+// NodeInfo identifies a Node and how to reach it over the Peer API.
+message NodeInfo {
+  string node_id = 1;
+  uint64 member_id = 2;
+  string peer_advertise_address = 3;
+}
+
+// ClusterState holds the current Elector and Primary as seen by the cluster.
+// Pushed to every Node by the Elector whenever either role changes.
+message ClusterState {
+  NodeInfo elector = 1;
+  NodeInfo primary = 2; // empty if no Primary elected
+}
