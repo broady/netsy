@@ -18,7 +18,10 @@ type NodeEntry struct {
 	ClientAdvertiseAddress string
 	PeerAdvertiseAddress   string
 	LastHeartbeat          time.Time
+	DegradedAt             time.Time
 	HealthState            nodestate.HealthState
+	PrimaryState           nodestate.PrimaryState
+	LatestRevision         int64
 }
 
 // NodeMap is the Elector's authoritative in-memory map of registered nodes.
@@ -85,6 +88,19 @@ func (m *NodeMap) All() []NodeEntry {
 	return entries
 }
 
+// ForEach calls fn for each node entry while holding the read lock. The
+// callback receives a copy of the entry. Avoid calling mutating NodeMap
+// methods from within fn — use the returned node IDs to act on entries
+// after iteration.
+func (m *NodeMap) ForEach(fn func(NodeEntry)) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	for _, e := range m.nodes {
+		fn(*e)
+	}
+}
+
 // Ready reports whether the bootstrap load has completed.
 func (m *NodeMap) Ready() bool {
 	m.mu.RLock()
@@ -136,8 +152,9 @@ func (m *NodeMap) ClearDeregistered() {
 	m.deregistered = make(map[string]struct{})
 }
 
-// UpdateHeartbeat updates the last heartbeat time for a node.
-func (m *NodeMap) UpdateHeartbeat(nodeID string, t time.Time) bool {
+// UpdateHeartbeat updates a node's heartbeat timestamp and state fields.
+// It returns false if the node is not registered.
+func (m *NodeMap) UpdateHeartbeat(nodeID string, t time.Time, health nodestate.HealthState, primary nodestate.PrimaryState, latestRevision int64) bool {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -146,5 +163,28 @@ func (m *NodeMap) UpdateHeartbeat(nodeID string, t time.Time) bool {
 		return false
 	}
 	e.LastHeartbeat = t
+	e.HealthState = health
+	e.PrimaryState = primary
+	e.LatestRevision = latestRevision
+	return true
+}
+
+// SetHealthState updates the health state for a node. When transitioning
+// to Degraded, DegradedAt is set to the current time. It returns false
+// if the node is not registered.
+func (m *NodeMap) SetHealthState(nodeID string, health nodestate.HealthState) bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	e, ok := m.nodes[nodeID]
+	if !ok {
+		return false
+	}
+	e.HealthState = health
+	if health == nodestate.HealthDegraded {
+		e.DegradedAt = time.Now()
+	} else {
+		e.DegradedAt = time.Time{}
+	}
 	return true
 }

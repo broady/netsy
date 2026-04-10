@@ -101,6 +101,8 @@ func New(
 		store,
 		state,
 		cfg.Elector.DeregistrationTimeout.Duration,
+		cfg.Elector.HeartbeatInterval.Duration,
+		cfg.Elector.DegradationCount,
 	)
 
 	return r, nil
@@ -186,7 +188,7 @@ func (r *Runner) onAcquireLeadership() error {
 			r.logger.Error("elector bootstrap failed", "error", err)
 		}
 	}()
-	go r.server.RunDeregistrationLoop(ctx)
+	go r.server.runHealthCheckLoop(ctx)
 
 	return nil
 }

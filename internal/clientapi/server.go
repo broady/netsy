@@ -4,14 +4,11 @@
 package clientapi
 
 import (
-	"fmt"
 	"log/slog"
 
 	"github.com/nadrama-com/netsy/internal/config"
 	"github.com/nadrama-com/netsy/internal/localdb"
 	"github.com/nadrama-com/netsy/internal/primary"
-	"github.com/nadrama-com/netsy/internal/snapshot"
-	"github.com/nadrama-com/netsy/internal/storage"
 
 	pb "go.etcd.io/etcd/api/v3/etcdserverpb"
 	"google.golang.org/grpc"
@@ -49,16 +46,7 @@ type ClientAPIServer struct {
 }
 
 // NewServer registers the etcd-compatible Client API services on the provided gRPC server.
-func NewServer(logger *slog.Logger, conf *config.Config, db localdb.Database, grpcServer *grpc.Server, snapshotWorker *snapshot.Worker, storageClient storage.ObjectStorage) (*ClientAPIServer, error) {
-	var err error
-
-	// TODO: in future we will replace this with a peer server gRPC client
-	// when the Netsy server is not the leader
-	peerServer, err := primary.NewServer(logger, conf, db, snapshotWorker, storageClient)
-	if err != nil {
-		return nil, fmt.Errorf("primary.NewServer error: %s", err)
-	}
-
+func NewServer(logger *slog.Logger, conf *config.Config, db localdb.Database, grpcServer *grpc.Server, peerServer *primary.Server) *ClientAPIServer {
 	clientServer := &ClientAPIServer{
 		logger:     logger,
 		config:     conf,
@@ -80,7 +68,7 @@ func NewServer(logger *slog.Logger, conf *config.Config, db localdb.Database, gr
 	healthpb.RegisterHealthServer(grpcServer, hsrv)
 	reflection.Register(grpcServer)
 
-	return clientServer, nil
+	return clientServer
 }
 
 func (clientServer *ClientAPIServer) Close() {

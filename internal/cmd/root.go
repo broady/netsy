@@ -22,9 +22,11 @@ import (
 	"github.com/nadrama-com/netsy/internal/discovery"
 	"github.com/nadrama-com/netsy/internal/elector"
 	"github.com/nadrama-com/netsy/internal/healthserver"
+	"github.com/nadrama-com/netsy/internal/heartbeat"
 	"github.com/nadrama-com/netsy/internal/localdb"
 	"github.com/nadrama-com/netsy/internal/mtls"
 	"github.com/nadrama-com/netsy/internal/nodestate"
+	"github.com/nadrama-com/netsy/internal/primary"
 	"github.com/nadrama-com/netsy/internal/proto"
 	"github.com/nadrama-com/netsy/internal/snapshot"
 	"github.com/nadrama-com/netsy/internal/storage"
@@ -152,6 +154,11 @@ func NewRootCmd() *cobra.Command {
 			filteredLogger.Error("Failed to construct client API TLS config", "err", err)
 			jitterWaitThenExit(filteredLogger)
 		}
+		tlsConfigPeerAPI, err := mtls.NewServerTLSConfig(c, tlsFiles, mtls.RolePeer)
+		if err != nil {
+			filteredLogger.Error("Failed to construct peer API TLS config", "err", err)
+			jitterWaitThenExit(filteredLogger)
+		}
 		tlsConfigPeerClient, err := mtls.NewClientTLSConfig(tlsFiles)
 		if err != nil {
 			filteredLogger.Error("Failed to construct peer client TLS config", "err", err)
@@ -254,6 +261,55 @@ func NewRootCmd() *cobra.Command {
 		// Start snapshot worker after backfill is complete
 		snapshotWorker.Start()
 
+		// Create Primary server (transaction processing, replication, heartbeat collection)
+		// TODO: only do this once node has been elected as the Primary by the Elector
+		primarySrv, err := primary.NewServer(
+			filteredLogger.With("component", "primary"),
+			c,
+			db,
+			snapshotWorker,
+			storageClient,
+			state,
+			c.Replication.HeartbeatInterval.Duration,
+			c.Replication.DegradationCount,
+		)
+		if err != nil {
+			filteredLogger.Error("Failed to create primary server", "error", err)
+			os.Exit(1)
+		}
+
+		// Setup and run Peer gRPC server (Elector, Primary, and Node services)
+		peerOpts := []grpc.ServerOption{
+			grpc.Creds(credentials.NewTLS(tlsConfigPeerAPI)),
+		}
+		peerGRPCServer := grpc.NewServer(peerOpts...)
+		proto.RegisterElectorServer(peerGRPCServer, electionRunner.ElectorServer())
+		proto.RegisterPrimaryServer(peerGRPCServer, primarySrv)
+		peerListener, err := net.Listen("tcp", c.BindPeer)
+		if err != nil {
+			filteredLogger.Error("Unable to create peer gRPC server listener", "err", err)
+			os.Exit(1)
+		}
+		filteredLogger.Info("starting peer (grpc) server...", "addr", c.BindPeer)
+		peerShutdownCh := make(chan error, 1)
+		go func() {
+			peerShutdownCh <- peerGRPCServer.Serve(peerListener)
+		}()
+
+		// Start heartbeat sender
+		startTime := time.Now().Unix()
+		heartbeatSender := heartbeat.NewSender(
+			filteredLogger.With("component", "heartbeat"),
+			c.NodeID,
+			state,
+			db,
+			startTime,
+			c.Elector.HeartbeatInterval.Duration,
+			c.Replication.HeartbeatInterval.Duration,
+		)
+		heartbeatSender.SetElector(electionStatus.LeaderID, electorClient)
+		go heartbeatSender.Run(ctx)
+
 		// Setup and run gRPC server with (etcd-compatible) client API
 		gopts := []grpc.ServerOption{
 			grpc.KeepaliveEnforcementPolicy(keepalive.EnforcementPolicy{
@@ -267,11 +323,7 @@ func NewRootCmd() *cobra.Command {
 		}
 		gopts = append(gopts, grpc.Creds(credentials.NewTLS(tlsConfigClientAPI)))
 		grpcServer := grpc.NewServer(gopts...)
-		clientApiServer, err := clientapi.NewServer(filteredLogger, c, db, grpcServer, snapshotWorker, storageClient)
-		if err != nil {
-			filteredLogger.Error("Unable to create server client", "err", err)
-			os.Exit(1)
-		}
+		clientApiServer := clientapi.NewServer(filteredLogger, c, db, grpcServer, primarySrv)
 		grpcListener, err := net.Listen("tcp", c.BindClient)
 		if err != nil {
 			filteredLogger.Error("Unable to create gRPC server listener", "err", err)
@@ -288,9 +340,12 @@ func NewRootCmd() *cobra.Command {
 		case sig := <-sigCh:
 			filteredLogger.Info("received signal, starting shutdown", "signal", sig.String())
 		case err := <-shutdownCh:
-			filteredLogger.Error("grpc server failed, starting shutdown", "error", err)
+			filteredLogger.Error("client grpc server failed, starting shutdown", "error", err)
+		case err := <-peerShutdownCh:
+			filteredLogger.Error("peer grpc server failed, starting shutdown", "error", err)
 		}
 		signal.Stop(sigCh)
+		cancel() // stop heartbeat sender and other background goroutines
 
 		// Mark node as degraded health
 		if err := state.SetHealth(nodestate.HealthDegraded); err != nil {
@@ -313,6 +368,7 @@ func NewRootCmd() *cobra.Command {
 
 		// Close API servers and exit
 		clientApiServer.Close()
+		peerGRPCServer.GracefulStop()
 		filteredLogger.Info("exiting")
 	}
 

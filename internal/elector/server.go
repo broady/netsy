@@ -25,12 +25,14 @@ import (
 type Server struct {
 	proto.UnimplementedElectorServer
 
-	logger       *slog.Logger
-	clusterID    string
-	store        storage.ObjectStorage
-	state        *nodestate.State
-	nodeMap      *NodeMap
-	deregTimeout time.Duration
+	logger            *slog.Logger
+	clusterID         string
+	store             storage.ObjectStorage
+	state             *nodestate.State
+	nodeMap           *NodeMap
+	deregTimeout      time.Duration
+	heartbeatInterval time.Duration
+	degradationCount  int
 }
 
 // NewServer creates a new Elector gRPC server.
@@ -40,14 +42,18 @@ func NewServer(
 	store storage.ObjectStorage,
 	state *nodestate.State,
 	deregTimeout time.Duration,
+	heartbeatInterval time.Duration,
+	degradationCount int,
 ) *Server {
 	return &Server{
-		logger:       logger,
-		clusterID:    clusterID,
-		store:        store,
-		state:        state,
-		nodeMap:      NewNodeMap(logger.With("component", "node-map")),
-		deregTimeout: deregTimeout,
+		logger:            logger,
+		clusterID:         clusterID,
+		store:             store,
+		state:             state,
+		nodeMap:           NewNodeMap(logger.With("component", "node-map")),
+		deregTimeout:      deregTimeout,
+		heartbeatInterval: heartbeatInterval,
+		degradationCount:  degradationCount,
 	}
 }
 
@@ -123,7 +129,8 @@ func (s *Server) GetClusterState(_ context.Context, _ *emptypb.Empty) (resp *pro
 	return s.buildClusterState(), nil
 }
 
-// SendHeartbeat updates the last heartbeat time for a node.
+// SendHeartbeat receives a NodeState heartbeat from a Node, updating the
+// node map with the latest heartbeat timestamp and reported state.
 func (s *Server) SendHeartbeat(_ context.Context, req *proto.NodeState) (_ *emptypb.Empty, err error) {
 	if err := s.requireLeader(); err != nil {
 		return nil, err
@@ -132,7 +139,10 @@ func (s *Server) SendHeartbeat(_ context.Context, req *proto.NodeState) (_ *empt
 		return nil, status.Error(codes.InvalidArgument, "node_id is required")
 	}
 
-	if !s.nodeMap.UpdateHeartbeat(req.GetNodeId(), time.Now()) {
+	health := nodestate.HealthFromProto(req.GetHealthState())
+	primary := nodestate.PrimaryFromProto(req.GetPrimaryState())
+
+	if !s.nodeMap.UpdateHeartbeat(req.GetNodeId(), time.Now(), health, primary, req.GetLatestRevision()) {
 		return nil, status.Errorf(codes.NotFound, "node %s is not registered", req.GetNodeId())
 	}
 
