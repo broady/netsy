@@ -16,11 +16,12 @@ const (
 // validPrimaryTransitions defines the set of allowed state changes.
 // Replica -> Starting: elected by the Elector
 // Starting -> Active: preflight checks complete
+// Starting -> Replica: superseded by a new election before becoming active
 // Active -> Draining: shutdown signal, chunk buffer full, or self-degradation
 // Draining -> Replica: finished draining, giving up leadership
 var validPrimaryTransitions = map[PrimaryState][]PrimaryState{
 	PrimaryReplica:  {PrimaryStarting},
-	PrimaryStarting: {PrimaryActive},
+	PrimaryStarting: {PrimaryActive, PrimaryReplica},
 	PrimaryActive:   {PrimaryDraining},
 	PrimaryDraining: {PrimaryReplica},
 }

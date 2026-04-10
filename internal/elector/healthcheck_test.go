@@ -10,12 +10,14 @@ import (
 	"time"
 
 	"github.com/nadrama-com/netsy/internal/nodestate"
+	"github.com/nadrama-com/netsy/internal/peerclient"
 	"github.com/nadrama-com/netsy/internal/storage"
 )
 
 func newTestServer(heartbeatInterval time.Duration, degradationCount int) *Server {
 	state := nodestate.New(slog.Default())
 	_ = state.SetElector(nodestate.ElectorLeader)
+	mgr := peerclient.NewManager(slog.Default(), "test-node", nil, state)
 	return NewServer(
 		slog.Default(),
 		"test-cluster",
@@ -24,6 +26,7 @@ func newTestServer(heartbeatInterval time.Duration, degradationCount int) *Serve
 		0, // deregTimeout
 		heartbeatInterval,
 		degradationCount,
+		"test-node", 0, nil, 0, 0, mgr,
 	)
 }
 
@@ -117,6 +120,7 @@ func TestCheckNodeHealthNotReadySkips(t *testing.T) {
 func TestCheckNodeHealthDeregistersAfterTimeout(t *testing.T) {
 	state := nodestate.New(slog.Default())
 	_ = state.SetElector(nodestate.ElectorLeader)
+	mgr := peerclient.NewManager(slog.Default(), "test-node", nil, state)
 	srv := NewServer(
 		slog.Default(),
 		"test-cluster",
@@ -125,6 +129,7 @@ func TestCheckNodeHealthDeregistersAfterTimeout(t *testing.T) {
 		100*time.Millisecond, // deregTimeout
 		50*time.Millisecond,
 		2,
+		"test-node", 0, nil, 0, 0, mgr,
 	)
 	srv.nodeMap.SetReady()
 
@@ -147,6 +152,7 @@ func TestCheckNodeHealthDeregistersAfterTimeout(t *testing.T) {
 func TestCheckNodeHealthKeepsDegradedBeforeTimeout(t *testing.T) {
 	state := nodestate.New(slog.Default())
 	_ = state.SetElector(nodestate.ElectorLeader)
+	mgr := peerclient.NewManager(slog.Default(), "test-node", nil, state)
 	srv := NewServer(
 		slog.Default(),
 		"test-cluster",
@@ -155,6 +161,7 @@ func TestCheckNodeHealthKeepsDegradedBeforeTimeout(t *testing.T) {
 		time.Hour, // deregTimeout — far in the future
 		50*time.Millisecond,
 		2,
+		"test-node", 0, nil, 0, 0, mgr,
 	)
 	srv.nodeMap.SetReady()
 
@@ -174,5 +181,127 @@ func TestCheckNodeHealthKeepsDegradedBeforeTimeout(t *testing.T) {
 	}
 	if entry.HealthState != nodestate.HealthDegraded {
 		t.Fatalf("expected degraded, got %s", entry.HealthState)
+	}
+}
+
+func TestCheckNodeHealthClearsPrimaryOnDegradation(t *testing.T) {
+	srv := newTestServer(50*time.Millisecond, 2)
+	srv.nodeMap.SetReady()
+
+	// Set node-a as the current Primary.
+	srv.state.SetClusterPrimary(nodestate.NodeInfo{
+		NodeID:            "node-a",
+		MemberID:          1,
+		PeerAdvertiseAddr: "10.0.0.1:2381",
+	})
+
+	srv.nodeMap.Add(NodeEntry{
+		NodeID:               "node-a",
+		MemberID:             1,
+		PeerAdvertiseAddress: "10.0.0.1:2381",
+		LastHeartbeat:        time.Now().Add(-200 * time.Millisecond),
+		HealthState:          nodestate.HealthHealthy,
+	})
+
+	srv.checkNodeHealth(context.Background())
+
+	// Primary should be cleared from ClusterState.
+	cs := srv.state.ClusterState()
+	if cs.Primary.NodeID != "" {
+		t.Fatalf("expected primary cleared, got %s", cs.Primary.NodeID)
+	}
+
+	// Previous primary should be saved for election drain check.
+	if srv.previousPrimary.NodeID != "node-a" {
+		t.Fatalf("expected previousPrimary=node-a, got %s", srv.previousPrimary.NodeID)
+	}
+}
+
+func TestCheckNodeHealthClearsPrimaryOnDeregistration(t *testing.T) {
+	state := nodestate.New(slog.Default())
+	_ = state.SetElector(nodestate.ElectorLeader)
+	mgr := peerclient.NewManager(slog.Default(), "test-node", nil, state)
+	srv := NewServer(
+		slog.Default(),
+		"test-cluster",
+		storage.NewMemoryStore(),
+		state,
+		100*time.Millisecond, // deregTimeout
+		50*time.Millisecond,
+		2,
+		"test-node", 0, nil, 0, 0, mgr,
+	)
+	srv.nodeMap.SetReady()
+
+	// Set node-a as the current Primary.
+	state.SetClusterPrimary(nodestate.NodeInfo{
+		NodeID:            "node-a",
+		MemberID:          1,
+		PeerAdvertiseAddr: "10.0.0.1:2381",
+	})
+
+	srv.nodeMap.Add(NodeEntry{
+		NodeID:               "node-a",
+		MemberID:             1,
+		PeerAdvertiseAddress: "10.0.0.1:2381",
+		LastHeartbeat:        time.Now().Add(-time.Hour),
+		DegradedAt:           time.Now().Add(-time.Hour),
+		HealthState:          nodestate.HealthDegraded,
+	})
+
+	srv.checkNodeHealth(context.Background())
+
+	// Node should be deregistered.
+	if _, ok := srv.nodeMap.Get("node-a"); ok {
+		t.Fatal("expected node-a to be deregistered")
+	}
+
+	// Primary should be cleared from ClusterState.
+	cs := state.ClusterState()
+	if cs.Primary.NodeID != "" {
+		t.Fatalf("expected primary cleared, got %s", cs.Primary.NodeID)
+	}
+
+	// Previous primary should be saved.
+	if srv.previousPrimary.NodeID != "node-a" {
+		t.Fatalf("expected previousPrimary=node-a, got %s", srv.previousPrimary.NodeID)
+	}
+}
+
+func TestCheckNodeHealthDoesNotClearNonPrimary(t *testing.T) {
+	srv := newTestServer(50*time.Millisecond, 2)
+	srv.nodeMap.SetReady()
+
+	// Set node-b as the Primary — node-a is just a Replica.
+	srv.state.SetClusterPrimary(nodestate.NodeInfo{
+		NodeID:            "node-b",
+		MemberID:          2,
+		PeerAdvertiseAddr: "10.0.0.2:2381",
+	})
+
+	srv.nodeMap.Add(NodeEntry{
+		NodeID:               "node-a",
+		MemberID:             1,
+		PeerAdvertiseAddress: "10.0.0.1:2381",
+		LastHeartbeat:        time.Now().Add(-200 * time.Millisecond),
+		HealthState:          nodestate.HealthHealthy,
+	})
+	srv.nodeMap.Add(NodeEntry{
+		NodeID:               "node-b",
+		MemberID:             2,
+		PeerAdvertiseAddress: "10.0.0.2:2381",
+		LastHeartbeat:        time.Now(),
+		HealthState:          nodestate.HealthHealthy,
+	})
+
+	srv.checkNodeHealth(context.Background())
+
+	// node-a degraded, but Primary (node-b) should remain.
+	cs := srv.state.ClusterState()
+	if cs.Primary.NodeID != "node-b" {
+		t.Fatalf("expected primary=node-b, got %s", cs.Primary.NodeID)
+	}
+	if srv.previousPrimary.NodeID != "" {
+		t.Fatalf("expected no previousPrimary, got %s", srv.previousPrimary.NodeID)
 	}
 }

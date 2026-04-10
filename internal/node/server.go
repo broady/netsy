@@ -1,0 +1,106 @@
+// Copyright 2026 Nadrama Pty Ltd
+// SPDX-License-Identifier: Apache-2.0
+
+package node
+
+import (
+	"context"
+	"log/slog"
+
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
+	"google.golang.org/protobuf/types/known/emptypb"
+
+	"github.com/nadrama-com/netsy/internal/nodestate"
+	"github.com/nadrama-com/netsy/internal/peerclient"
+	"github.com/nadrama-com/netsy/internal/proto"
+)
+
+// RevisionSource provides the latest revision for node state queries.
+type RevisionSource interface {
+	LatestRevision() (int64, error)
+}
+
+// Server implements the proto.NodeServer gRPC interface. It is hosted
+// by every Node and called by the Elector for cluster state pushes and
+// node state queries during Primary election.
+type Server struct {
+	proto.UnimplementedNodeServer
+
+	logger    *slog.Logger
+	nodeID    string
+	startTime int64
+	state     *nodestate.State
+	db        RevisionSource
+	peers     *peerclient.Manager
+	guard     *ElectorGuard
+}
+
+// NewServer creates a new Node gRPC server.
+func NewServer(
+	logger *slog.Logger,
+	nodeID string,
+	startTime int64,
+	state *nodestate.State,
+	db RevisionSource,
+	peers *peerclient.Manager,
+) *Server {
+	return &Server{
+		logger:    logger,
+		nodeID:    nodeID,
+		startTime: startTime,
+		state:     state,
+		db:        db,
+		peers:     peers,
+		guard:     NewElectorGuard(logger),
+	}
+}
+
+// GetNodeState returns the current node state triple, latest revision,
+// and start time. Called by the Elector during primary election.
+func (s *Server) GetNodeState(_ context.Context, _ *emptypb.Empty) (*proto.NodeState, error) {
+	latestRevision, err := s.db.LatestRevision()
+	if err != nil {
+		return nil, status.Errorf(codes.Internal, "failed to get latest revision: %v", err)
+	}
+
+	return &proto.NodeState{
+		NodeId:         s.nodeID,
+		HealthState:    nodestate.HealthToProto(s.state.Health()),
+		ElectorState:   nodestate.ElectorToProto(s.state.Elector()),
+		PrimaryState:   nodestate.PrimaryToProto(s.state.Primary()),
+		LatestRevision: latestRevision,
+		StartTime:      s.startTime,
+	}, nil
+}
+
+// PushClusterState receives and applies a cluster state update from the
+// Elector. It validates the update, checks for split-brain, converts the
+// proto message to the internal type, and delegates to the applier.
+func (s *Server) PushClusterState(ctx context.Context, req *proto.ClusterState) (*emptypb.Empty, error) {
+	if req.GetElector() == nil {
+		return nil, status.Error(codes.InvalidArgument, "elector info is required")
+	}
+
+	electorNodeID := req.GetElector().GetNodeId()
+	if electorNodeID == "" {
+		return nil, status.Error(codes.InvalidArgument, "elector node_id is required")
+	}
+
+	if err := s.guard.Check(electorNodeID); err != nil {
+		return nil, status.Errorf(codes.FailedPrecondition, "split-brain detected: %v", err)
+	}
+
+	cs := nodestate.ClusterStateFromProto(req)
+
+	s.logger.Info("received cluster state push",
+		"elector_node_id", cs.Elector.NodeID,
+		"primary_node_id", cs.Primary.NodeID,
+	)
+
+	s.peers.ApplyClusterState(ctx, cs)
+
+	return &emptypb.Empty{}, nil
+}
+
+

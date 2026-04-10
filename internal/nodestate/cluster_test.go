@@ -54,3 +54,24 @@ func TestSetClusterElector(t *testing.T) {
 		t.Fatalf("primary should be unchanged, got %q", cs.Primary.NodeID)
 	}
 }
+
+func TestSetClusterPrimary(t *testing.T) {
+	s := newTestState()
+	s.SetClusterState(ClusterState{
+		Elector: NodeInfo{NodeID: "node-a", PeerAdvertiseAddr: "10.0.0.1:2381"},
+		Primary: NodeInfo{NodeID: "node-b", PeerAdvertiseAddr: "10.0.0.2:2381"},
+	})
+
+	s.SetClusterPrimary(NodeInfo{NodeID: "node-c", MemberID: 3, PeerAdvertiseAddr: "10.0.0.3:2381"})
+
+	cs := s.ClusterState()
+	if cs.Primary.NodeID != "node-c" {
+		t.Fatalf("primary node_id = %q, want %q", cs.Primary.NodeID, "node-c")
+	}
+	if cs.Primary.MemberID != 3 {
+		t.Fatalf("primary member_id = %d, want %d", cs.Primary.MemberID, 3)
+	}
+	if cs.Elector.NodeID != "node-a" {
+		t.Fatalf("elector should be unchanged, got %q", cs.Elector.NodeID)
+	}
+}

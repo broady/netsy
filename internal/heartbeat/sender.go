@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/nadrama-com/netsy/internal/nodestate"
+	"github.com/nadrama-com/netsy/internal/peerclient"
 	"github.com/nadrama-com/netsy/internal/proto"
 )
 
@@ -30,6 +31,7 @@ type Sender struct {
 	logger              *slog.Logger
 	nodeID              string
 	state               *nodestate.State
+	peers               *peerclient.Manager
 	db                  RevisionSource
 	startTime           int64
 	electorInterval     time.Duration
@@ -40,25 +42,18 @@ type Sender struct {
 	// layer. If zero, no Receipt has been sent yet.
 	lastReceiptSent atomic.Int64
 
-	mu            sync.RWMutex
-	electorClient proto.ElectorClient
-	electorNodeID string
-	primaryClient proto.PrimaryClient
-	primaryNodeID string
-	sameNode      bool // true when Elector and Primary are the same Node
-	isPrimary     bool // true when this Node is the Primary (skip self-heartbeats)
-
-	resetElector chan struct{}
-	resetPrimary chan struct{}
+	// lastPrimaryNodeID tracks the Primary node ID from the previous
+	// tick so we can clear lastReceiptSent on Primary changes.
+	lastPrimaryMu     sync.Mutex
+	lastPrimaryNodeID string
 }
 
-// NewSender creates a heartbeat Sender. Elector and Primary targets are
-// set later via SetElector / SetPrimary as connections are established
-// or cluster state changes.
+// NewSender creates a heartbeat Sender.
 func NewSender(
 	logger *slog.Logger,
 	nodeID string,
 	state *nodestate.State,
+	peers *peerclient.Manager,
 	db RevisionSource,
 	startTime int64,
 	electorInterval time.Duration,
@@ -68,45 +63,11 @@ func NewSender(
 		logger:              logger,
 		nodeID:              nodeID,
 		state:               state,
+		peers:               peers,
 		db:                  db,
 		startTime:           startTime,
 		electorInterval:     electorInterval,
 		replicationInterval: replicationInterval,
-		resetElector:        make(chan struct{}, 1),
-		resetPrimary:        make(chan struct{}, 1),
-	}
-}
-
-// SetElector updates the Elector target connection and node ID. Called
-// when the Elector changes via a cluster state update. Resets the
-// elector heartbeat timer.
-func (s *Sender) SetElector(electorNodeID string, client proto.ElectorClient) {
-	s.mu.Lock()
-	s.electorClient = client
-	s.electorNodeID = electorNodeID
-	s.sameNode = electorNodeID != "" && electorNodeID == s.primaryNodeID
-	s.mu.Unlock()
-
-	select {
-	case s.resetElector <- struct{}{}:
-	default:
-	}
-}
-
-// SetPrimary updates the Primary target connection and node ID. Called
-// when the Primary changes via a cluster state update. Resets the
-// primary heartbeat timer.
-func (s *Sender) SetPrimary(primaryNodeID string, client proto.PrimaryClient) {
-	s.mu.Lock()
-	s.primaryClient = client
-	s.primaryNodeID = primaryNodeID
-	s.sameNode = s.electorNodeID != "" && s.electorNodeID == primaryNodeID
-	s.isPrimary = primaryNodeID != "" && primaryNodeID == s.nodeID
-	s.mu.Unlock()
-
-	select {
-	case s.resetPrimary <- struct{}{}:
-	default:
 	}
 }
 
@@ -149,8 +110,6 @@ func (s *Sender) runElectorLoop(ctx context.Context) {
 		select {
 		case <-ctx.Done():
 			return
-		case <-s.resetElector:
-			ticker.Reset(s.electorInterval)
 		case <-ticker.C:
 			s.sendToElector(ctx)
 		}
@@ -165,8 +124,6 @@ func (s *Sender) runPrimaryLoop(ctx context.Context) {
 		select {
 		case <-ctx.Done():
 			return
-		case <-s.resetPrimary:
-			ticker.Reset(s.replicationInterval)
 		case <-ticker.C:
 			s.sendToPrimaryIfNeeded(ctx)
 		}
@@ -174,10 +131,8 @@ func (s *Sender) runPrimaryLoop(ctx context.Context) {
 }
 
 func (s *Sender) sendToElector(ctx context.Context) {
-	s.mu.RLock()
-	client := s.electorClient
-	sameNode := s.sameNode
-	s.mu.RUnlock()
+	cs := s.state.ClusterState()
+	client := s.peers.ElectorClient()
 
 	if client == nil {
 		return
@@ -196,19 +151,34 @@ func (s *Sender) sendToElector(ctx context.Context) {
 	// When Elector == Primary, this heartbeat satisfies both since the
 	// server-side processing uses the same code path. Mark it so the
 	// primary loop does not send a redundant heartbeat.
-	if sameNode {
+	if cs.Elector.NodeID != "" && cs.Elector.NodeID == cs.Primary.NodeID {
 		s.lastReceiptSent.Store(time.Now().UnixNano())
 	}
 }
 
 func (s *Sender) sendToPrimaryIfNeeded(ctx context.Context) {
-	s.mu.RLock()
-	client := s.primaryClient
-	sameNode := s.sameNode
-	isPrimary := s.isPrimary
-	s.mu.RUnlock()
+	cs := s.state.ClusterState()
 
-	if client == nil || sameNode || isPrimary {
+	// Clear lastReceiptSent when the Primary changes so a receipt to
+	// the old Primary does not suppress the first heartbeat to the new one.
+	s.lastPrimaryMu.Lock()
+	if cs.Primary.NodeID != s.lastPrimaryNodeID {
+		s.lastPrimaryNodeID = cs.Primary.NodeID
+		s.lastReceiptSent.Store(0)
+	}
+	s.lastPrimaryMu.Unlock()
+
+	// Skip when Elector == Primary (covered by elector heartbeat),
+	// or when this node is the Primary.
+	sameNode := cs.Elector.NodeID != "" && cs.Elector.NodeID == cs.Primary.NodeID
+	isPrimary := cs.Primary.NodeID != "" && cs.Primary.NodeID == s.nodeID
+
+	if sameNode || isPrimary {
+		return
+	}
+
+	client := s.peers.PrimaryClient()
+	if client == nil {
 		return
 	}
 

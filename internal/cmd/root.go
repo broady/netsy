@@ -25,7 +25,9 @@ import (
 	"github.com/nadrama-com/netsy/internal/heartbeat"
 	"github.com/nadrama-com/netsy/internal/localdb"
 	"github.com/nadrama-com/netsy/internal/mtls"
+	"github.com/nadrama-com/netsy/internal/node"
 	"github.com/nadrama-com/netsy/internal/nodestate"
+	"github.com/nadrama-com/netsy/internal/peerclient"
 	"github.com/nadrama-com/netsy/internal/primary"
 	"github.com/nadrama-com/netsy/internal/proto"
 	"github.com/nadrama-com/netsy/internal/snapshot"
@@ -69,6 +71,9 @@ func NewRootCmd() *cobra.Command {
 	// Define root command
 	rootCmd.Run = func(cmd *cobra.Command, args []string) {
 		var err error
+
+		// Capture start time early for Primary leader election tie-breaking.
+		startTime := time.Now().Unix()
 
 		// Register signal handler early so signals during startup are
 		// captured in the buffered channel and handled once we reach
@@ -177,43 +182,6 @@ func NewRootCmd() *cobra.Command {
 		}
 		defer storageCleanup()
 
-		// Start elector - s3lect election, health server, and elector service
-		electionRunner, err := elector.New(filteredLogger, c, state, storageClient, tlsFiles.ServerCert)
-		if err != nil {
-			filteredLogger.Error("Failed to create election runner", "error", err)
-			jitterWaitThenExit(filteredLogger)
-		}
-		if err := electionRunner.Start(ctx); err != nil {
-			filteredLogger.Error("Failed to start election runner", "error", err)
-			jitterWaitThenExit(filteredLogger)
-		}
-		defer electionRunner.Stop(ctx)
-		filteredLogger.Info("starting election (https) server...", "addr", c.BindElection)
-
-		// Wait for first election cycle to know the current Elector
-		electionStatus, err := electionRunner.WaitForFirstElection(ctx)
-		if err != nil {
-			filteredLogger.Error("Failed to complete first elector leader election cycle", "error", err)
-			jitterWaitThenExit(filteredLogger)
-		}
-		filteredLogger.Info("first elector leader election cycle complete",
-			"is_leader", electionStatus.IsLeader,
-			"leader_id", electionStatus.LeaderID,
-			"leader_addr", electionStatus.LeaderAddr,
-		)
-
-		// Establish gRPC connection to the current Elector for peer RPCs
-		electorConn, err := grpc.NewClient(
-			electionStatus.LeaderAddr,
-			grpc.WithTransportCredentials(credentials.NewTLS(tlsConfigPeerClient)),
-		)
-		if err != nil {
-			filteredLogger.Error("Failed to create elector client connection", "error", err)
-			jitterWaitThenExit(filteredLogger)
-		}
-		defer electorConn.Close()
-		electorClient := proto.NewElectorClient(electorConn)
-
 		// Instantiate database
 		db := localdb.New(fmt.Sprintf("%s/db.sqlite3", c.DataDir))
 		err = db.Connect()
@@ -278,6 +246,74 @@ func NewRootCmd() *cobra.Command {
 			os.Exit(1)
 		}
 
+		// Create peer manager for outbound connections
+		peerManager := peerclient.NewManager(
+			filteredLogger.With("component", "peer-manager"),
+			c.NodeID,
+			tlsConfigPeerClient,
+			state,
+		)
+		defer peerManager.Close()
+
+		// Start elector — s3lect election, health server, and elector service.
+		// Created after DB and peer manager so all election dependencies are
+		// available at construction time.
+		electionRunner, err := elector.New(
+			filteredLogger, c, state, storageClient, tlsFiles.ServerCert,
+			startTime, db, peerManager,
+		)
+		if err != nil {
+			filteredLogger.Error("Failed to create election runner", "error", err)
+			jitterWaitThenExit(filteredLogger)
+		}
+		if err := electionRunner.Start(ctx); err != nil {
+			filteredLogger.Error("Failed to start election runner", "error", err)
+			jitterWaitThenExit(filteredLogger)
+		}
+		defer electionRunner.Stop(ctx)
+		filteredLogger.Info("starting election (https) server...", "addr", c.BindElection)
+
+		// Wait for first election cycle to know the current Elector
+		electionStatus, err := electionRunner.WaitForFirstElection(ctx)
+		if err != nil {
+			filteredLogger.Error("Failed to complete first elector leader election cycle", "error", err)
+			jitterWaitThenExit(filteredLogger)
+		}
+		filteredLogger.Info("first elector leader election cycle complete",
+			"is_leader", electionStatus.IsLeader,
+			"leader_id", electionStatus.LeaderID,
+			"leader_addr", electionStatus.LeaderAddr,
+		)
+
+		// Connect to the current Elector for peer RPCs
+		if err := peerManager.ConnectElector(electionStatus.LeaderID, electionStatus.LeaderAddr); err != nil {
+			filteredLogger.Error("Failed to connect to elector", "error", err)
+			jitterWaitThenExit(filteredLogger)
+		}
+
+		// Create and start heartbeat sender
+		heartbeatSender := heartbeat.NewSender(
+			filteredLogger.With("component", "heartbeat"),
+			c.NodeID,
+			state,
+			peerManager,
+			db,
+			startTime,
+			c.Elector.HeartbeatInterval.Duration,
+			c.Replication.HeartbeatInterval.Duration,
+		)
+		go heartbeatSender.Run(ctx)
+
+		// Create Node gRPC server
+		nodeSrv := node.NewServer(
+			filteredLogger.With("component", "node-server"),
+			c.NodeID,
+			startTime,
+			state,
+			db,
+			peerManager,
+		)
+
 		// Setup and run Peer gRPC server (Elector, Primary, and Node services)
 		peerOpts := []grpc.ServerOption{
 			grpc.Creds(credentials.NewTLS(tlsConfigPeerAPI)),
@@ -285,6 +321,7 @@ func NewRootCmd() *cobra.Command {
 		peerGRPCServer := grpc.NewServer(peerOpts...)
 		proto.RegisterElectorServer(peerGRPCServer, electionRunner.ElectorServer())
 		proto.RegisterPrimaryServer(peerGRPCServer, primarySrv)
+		proto.RegisterNodeServer(peerGRPCServer, nodeSrv)
 		peerListener, err := net.Listen("tcp", c.BindPeer)
 		if err != nil {
 			filteredLogger.Error("Unable to create peer gRPC server listener", "err", err)
@@ -295,20 +332,6 @@ func NewRootCmd() *cobra.Command {
 		go func() {
 			peerShutdownCh <- peerGRPCServer.Serve(peerListener)
 		}()
-
-		// Start heartbeat sender
-		startTime := time.Now().Unix()
-		heartbeatSender := heartbeat.NewSender(
-			filteredLogger.With("component", "heartbeat"),
-			c.NodeID,
-			state,
-			db,
-			startTime,
-			c.Elector.HeartbeatInterval.Duration,
-			c.Replication.HeartbeatInterval.Duration,
-		)
-		heartbeatSender.SetElector(electionStatus.LeaderID, electorClient)
-		go heartbeatSender.Run(ctx)
 
 		// Setup and run gRPC server with (etcd-compatible) client API
 		gopts := []grpc.ServerOption{
@@ -357,8 +380,12 @@ func NewRootCmd() *cobra.Command {
 		defer deregCancel()
 
 		// Deregister node with Elector
-		if _, err := electorClient.DeregisterNode(deregCtx, &proto.DeregisterNodeRequest{NodeId: c.NodeID}); err != nil {
-			filteredLogger.Error("deregistration RPC failed", "error", err)
+		if ec := peerManager.ElectorClient(); ec != nil {
+			if _, err := ec.DeregisterNode(deregCtx, &proto.DeregisterNodeRequest{NodeId: c.NodeID}); err != nil {
+				filteredLogger.Error("deregistration RPC failed", "error", err)
+			}
+		} else {
+			filteredLogger.Warn("no elector connection available for deregistration")
 		}
 
 		// Delete node registration file in object storage

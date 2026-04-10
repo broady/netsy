@@ -43,6 +43,11 @@ func (s *Server) runHealthCheckLoop(ctx context.Context) {
 // node: degradation (missed heartbeats) and deregistration (prolonged
 // degradation). It collects node IDs to act on during iteration, then
 // applies mutations after releasing the read lock to avoid deadlock.
+//
+// When the current Primary is degraded or deregistered, the previous
+// Primary identity is saved for election step 1 (drain check),
+// ClusterState.Primary is cleared, and the updated state is pushed to
+// all nodes so they disconnect from the old Primary.
 func (s *Server) checkNodeHealth(ctx context.Context) {
 	if !s.nodeMap.Ready() {
 		return
@@ -89,4 +94,37 @@ func (s *Server) checkNodeHealth(ctx context.Context) {
 			)
 		}
 	}
+
+	// If the current Primary was degraded or deregistered, clear it
+	// from ClusterState so the election loop triggers re-election.
+	primaryNodeID := s.state.ClusterState().Primary.NodeID
+	if primaryNodeID == "" {
+		return
+	}
+	for _, nodeID := range toDegraded {
+		if nodeID == primaryNodeID {
+			s.clearPrimary(ctx, "primary degraded due to missed heartbeats")
+			return
+		}
+	}
+	for _, nodeID := range toDeregistered {
+		if nodeID == primaryNodeID {
+			s.clearPrimary(ctx, "primary auto-deregistered")
+			return
+		}
+	}
+}
+
+// clearPrimary saves the current Primary as previousPrimary for the
+// election drain check, clears ClusterState.Primary, and pushes the
+// updated state to all nodes.
+func (s *Server) clearPrimary(ctx context.Context, reason string) {
+	cs := s.state.ClusterState()
+	s.logger.Warn("clearing primary from cluster state",
+		"node_id", cs.Primary.NodeID,
+		"reason", reason,
+	)
+	s.previousPrimary = cs.Primary
+	s.state.SetClusterPrimary(nodestate.NodeInfo{})
+	s.pushClusterState(ctx)
 }

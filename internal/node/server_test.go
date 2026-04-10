@@ -1,0 +1,122 @@
+// Copyright 2026 Nadrama Pty Ltd
+// SPDX-License-Identifier: Apache-2.0
+
+package node
+
+import (
+	"context"
+	"log/slog"
+	"testing"
+
+	"google.golang.org/protobuf/types/known/emptypb"
+
+	"github.com/nadrama-com/netsy/internal/nodestate"
+	"github.com/nadrama-com/netsy/internal/peerclient"
+	"github.com/nadrama-com/netsy/internal/proto"
+)
+
+type mockRevisionSource struct {
+	revision int64
+	err      error
+}
+
+func (m *mockRevisionSource) LatestRevision() (int64, error) {
+	return m.revision, m.err
+}
+
+func newTestServer(revision int64) *Server {
+	state := nodestate.New(slog.Default())
+	_ = state.SetHealth(nodestate.HealthHealthy)
+
+	mgr := peerclient.NewManager(slog.Default(), "node-a", nil, state)
+
+	return NewServer(
+		slog.Default(),
+		"node-a",
+		1000,
+		state,
+		&mockRevisionSource{revision: revision},
+		mgr,
+	)
+}
+
+func TestGetNodeState(t *testing.T) {
+	srv := newTestServer(42)
+
+	resp, err := srv.GetNodeState(context.Background(), &emptypb.Empty{})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if resp.GetNodeId() != "node-a" {
+		t.Fatalf("expected node-a, got %s", resp.GetNodeId())
+	}
+	if resp.GetLatestRevision() != 42 {
+		t.Fatalf("expected revision 42, got %d", resp.GetLatestRevision())
+	}
+	if resp.GetStartTime() != 1000 {
+		t.Fatalf("expected start time 1000, got %d", resp.GetStartTime())
+	}
+	if resp.GetHealthState() != proto.HealthState_HEALTH_HEALTHY {
+		t.Fatalf("expected healthy, got %v", resp.GetHealthState())
+	}
+	if resp.GetPrimaryState() != proto.PrimaryState_PRIMARY_REPLICA {
+		t.Fatalf("expected replica, got %v", resp.GetPrimaryState())
+	}
+	if resp.GetElectorState() != proto.ElectorState_ELECTOR_FOLLOWER {
+		t.Fatalf("expected follower, got %v", resp.GetElectorState())
+	}
+}
+
+func TestPushClusterStateMissingElector(t *testing.T) {
+	srv := newTestServer(0)
+
+	_, err := srv.PushClusterState(context.Background(), &proto.ClusterState{})
+	if err == nil {
+		t.Fatal("expected error for missing elector info")
+	}
+}
+
+func TestPushClusterStateMissingElectorNodeID(t *testing.T) {
+	srv := newTestServer(0)
+
+	_, err := srv.PushClusterState(context.Background(), &proto.ClusterState{
+		Elector: &proto.NodeInfo{},
+	})
+	if err == nil {
+		t.Fatal("expected error for empty elector node_id")
+	}
+}
+
+func TestPushClusterStateUpdatesState(t *testing.T) {
+	srv := newTestServer(0)
+
+	cs := &proto.ClusterState{
+		Elector: &proto.NodeInfo{
+			NodeId:               "elector-1",
+			MemberId:             1,
+			PeerAdvertiseAddress: "10.0.0.1:2381",
+		},
+		Primary: &proto.NodeInfo{
+			NodeId:               "primary-1",
+			MemberId:             2,
+			PeerAdvertiseAddress: "10.0.0.2:2381",
+		},
+	}
+
+	_, err := srv.PushClusterState(context.Background(), cs)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	got := srv.state.ClusterState()
+	if got.Elector.NodeID != "elector-1" {
+		t.Fatalf("expected elector-1, got %s", got.Elector.NodeID)
+	}
+	if got.Primary.NodeID != "primary-1" {
+		t.Fatalf("expected primary-1, got %s", got.Primary.NodeID)
+	}
+	if got.Primary.MemberID != 2 {
+		t.Fatalf("expected member_id 2, got %d", got.Primary.MemberID)
+	}
+}

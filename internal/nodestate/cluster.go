@@ -48,3 +48,15 @@ func (s *State) SetClusterElector(elector NodeInfo) {
 		"elector_peer_addr", elector.PeerAdvertiseAddr,
 	)
 }
+
+// SetClusterPrimary updates only the Primary in the ClusterState.
+func (s *State) SetClusterPrimary(primary NodeInfo) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	s.cluster.Primary = primary
+	s.logger.Info("cluster_state_updated",
+		"primary_node_id", primary.NodeID,
+		"primary_peer_addr", primary.PeerAdvertiseAddr,
+	)
+}

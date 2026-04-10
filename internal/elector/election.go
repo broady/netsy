@@ -15,6 +15,7 @@ import (
 
 	"github.com/nadrama-com/netsy/internal/config"
 	"github.com/nadrama-com/netsy/internal/nodestate"
+	"github.com/nadrama-com/netsy/internal/peerclient"
 	"github.com/nadrama-com/netsy/internal/storage"
 )
 
@@ -43,6 +44,9 @@ func New(
 	state *nodestate.State,
 	store storage.ObjectStorage,
 	serverCert *tls.Certificate,
+	localStartTime int64,
+	localDB RevisionSource,
+	peers *peerclient.Manager,
 ) (*Runner, error) {
 	caCertPEM, err := os.ReadFile(cfg.TLSCACert)
 	if err != nil {
@@ -95,6 +99,11 @@ func New(
 	}
 	r.healthSrv = healthSrv
 
+	quorum := -1
+	if cfg.Replication.Quorum != nil {
+		quorum = *cfg.Replication.Quorum
+	}
+
 	r.server = NewServer(
 		logger.With("component", "elector-server"),
 		cfg.ClusterID,
@@ -103,6 +112,12 @@ func New(
 		cfg.Elector.DeregistrationTimeout.Duration,
 		cfg.Elector.HeartbeatInterval.Duration,
 		cfg.Elector.DegradationCount,
+		cfg.NodeID,
+		localStartTime,
+		localDB,
+		quorum,
+		cfg.Elector.PrimaryPriorTimeout.Duration,
+		peers,
 	)
 
 	return r, nil
@@ -186,7 +201,10 @@ func (r *Runner) onAcquireLeadership() error {
 	go func() {
 		if err := r.server.Bootstrap(ctx); err != nil {
 			r.logger.Error("elector bootstrap failed", "error", err)
+			return
 		}
+		// Start primary election loop after bootstrap completes.
+		go r.server.runPrimaryElectionLoop(ctx)
 	}()
 	go r.server.runHealthCheckLoop(ctx)
 
@@ -200,6 +218,8 @@ func (r *Runner) onLoseLeadership() error {
 		r.leaderCancel = nil
 	}
 	r.server.nodeMap.Reset()
+	r.state.SetClusterPrimary(nodestate.NodeInfo{})
+	r.server.previousPrimary = nodestate.NodeInfo{}
 	if err := r.state.SetElector(nodestate.ElectorFollower); err != nil {
 		r.logger.Error("failed to transition elector state to follower", "error", err)
 	}

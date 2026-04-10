@@ -87,3 +87,45 @@ func PrimaryToProto(p PrimaryState) proto.PrimaryState {
 		return proto.PrimaryState_PRIMARY_UNKNOWN
 	}
 }
+
+// ClusterStateToProto converts an internal ClusterState to a proto
+// ClusterState message. The Elector is always set; the Primary is only
+// set when its NodeID is non-empty.
+func ClusterStateToProto(cs ClusterState) *proto.ClusterState {
+	result := &proto.ClusterState{
+		Elector: &proto.NodeInfo{
+			NodeId:               cs.Elector.NodeID,
+			MemberId:             cs.Elector.MemberID,
+			PeerAdvertiseAddress: cs.Elector.PeerAdvertiseAddr,
+		},
+	}
+	if cs.Primary.NodeID != "" {
+		result.Primary = &proto.NodeInfo{
+			NodeId:               cs.Primary.NodeID,
+			MemberId:             cs.Primary.MemberID,
+			PeerAdvertiseAddress: cs.Primary.PeerAdvertiseAddr,
+		}
+	}
+	return result
+}
+
+// ClusterStateFromProto converts a proto ClusterState message to the
+// internal ClusterState type. The Elector is always read; the Primary
+// is only read when non-nil.
+func ClusterStateFromProto(cs *proto.ClusterState) ClusterState {
+	result := ClusterState{
+		Elector: NodeInfo{
+			NodeID:            cs.GetElector().GetNodeId(),
+			MemberID:          cs.GetElector().GetMemberId(),
+			PeerAdvertiseAddr: cs.GetElector().GetPeerAdvertiseAddress(),
+		},
+	}
+	if cs.GetPrimary() != nil {
+		result.Primary = NodeInfo{
+			NodeID:            cs.GetPrimary().GetNodeId(),
+			MemberID:          cs.GetPrimary().GetMemberId(),
+			PeerAdvertiseAddr: cs.GetPrimary().GetPeerAdvertiseAddress(),
+		}
+	}
+	return result
+}

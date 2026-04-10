@@ -22,6 +22,7 @@ type NodeEntry struct {
 	HealthState            nodestate.HealthState
 	PrimaryState           nodestate.PrimaryState
 	LatestRevision         int64
+	StartTime              int64
 }
 
 // NodeMap is the Elector's authoritative in-memory map of registered nodes.
@@ -154,7 +155,7 @@ func (m *NodeMap) ClearDeregistered() {
 
 // UpdateHeartbeat updates a node's heartbeat timestamp and state fields.
 // It returns false if the node is not registered.
-func (m *NodeMap) UpdateHeartbeat(nodeID string, t time.Time, health nodestate.HealthState, primary nodestate.PrimaryState, latestRevision int64) bool {
+func (m *NodeMap) UpdateHeartbeat(nodeID string, t time.Time, health nodestate.HealthState, primary nodestate.PrimaryState, latestRevision int64, startTime int64) bool {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -166,7 +167,15 @@ func (m *NodeMap) UpdateHeartbeat(nodeID string, t time.Time, health nodestate.H
 	e.HealthState = health
 	e.PrimaryState = primary
 	e.LatestRevision = latestRevision
+	e.StartTime = startTime
 	return true
+}
+
+// Count returns the number of registered nodes.
+func (m *NodeMap) Count() int {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return len(m.nodes)
 }
 
 // SetHealthState updates the health state for a node. When transitioning

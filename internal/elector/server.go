@@ -16,9 +16,15 @@ import (
 
 	"github.com/nadrama-com/netsy/internal/discovery"
 	"github.com/nadrama-com/netsy/internal/nodestate"
+	"github.com/nadrama-com/netsy/internal/peerclient"
 	"github.com/nadrama-com/netsy/internal/proto"
 	"github.com/nadrama-com/netsy/internal/storage"
 )
+
+// RevisionSource provides the latest revision for election tie-breaking.
+type RevisionSource interface {
+	LatestRevision() (int64, error)
+}
 
 // Server implements the proto.ElectorServer gRPC interface. It is only
 // active when the local node is the Elector (leader).
@@ -33,6 +39,19 @@ type Server struct {
 	deregTimeout      time.Duration
 	heartbeatInterval time.Duration
 	degradationCount  int
+
+	// Fields for primary election.
+	localNodeID         string
+	localStartTime      int64
+	localDB             RevisionSource
+	quorum              int
+	primaryPriorTimeout time.Duration
+	peers               *peerclient.Manager
+
+	// previousPrimary holds the identity of the last known Primary so
+	// that checkPreviousPrimary can contact it for a drain check even
+	// after the Primary has been cleared from ClusterState.
+	previousPrimary nodestate.NodeInfo
 }
 
 // NewServer creates a new Elector gRPC server.
@@ -44,16 +63,28 @@ func NewServer(
 	deregTimeout time.Duration,
 	heartbeatInterval time.Duration,
 	degradationCount int,
+	localNodeID string,
+	localStartTime int64,
+	localDB RevisionSource,
+	quorum int,
+	primaryPriorTimeout time.Duration,
+	peers *peerclient.Manager,
 ) *Server {
 	return &Server{
-		logger:            logger,
-		clusterID:         clusterID,
-		store:             store,
-		state:             state,
-		nodeMap:           NewNodeMap(logger.With("component", "node-map")),
-		deregTimeout:      deregTimeout,
-		heartbeatInterval: heartbeatInterval,
-		degradationCount:  degradationCount,
+		logger:              logger,
+		clusterID:           clusterID,
+		store:               store,
+		state:               state,
+		nodeMap:              NewNodeMap(logger.With("component", "node-map")),
+		deregTimeout:        deregTimeout,
+		heartbeatInterval:   heartbeatInterval,
+		degradationCount:    degradationCount,
+		localNodeID:         localNodeID,
+		localStartTime:      localStartTime,
+		localDB:             localDB,
+		quorum:              quorum,
+		primaryPriorTimeout: primaryPriorTimeout,
+		peers:               peers,
 	}
 }
 
@@ -90,7 +121,7 @@ func (s *Server) RegisterNode(ctx context.Context, req *proto.RegisterNodeReques
 		HealthState:            nodestate.HealthLoading,
 	})
 
-	cs := s.buildClusterState()
+	cs := nodestate.ClusterStateToProto(s.state.ClusterState())
 
 	return &proto.RegisterNodeResponse{
 		MemberId:     memberID,
@@ -109,10 +140,15 @@ func (s *Server) DeregisterNode(ctx context.Context, req *proto.DeregisterNodeRe
 		return nil, status.Error(codes.InvalidArgument, "node_id is required")
 	}
 
-	s.logger.Info("deregistering node", "node_id", req.GetNodeId())
+	nodeID := req.GetNodeId()
+	s.logger.Info("deregistering node", "node_id", nodeID)
 
-	s.nodeMap.MarkDeregistered(req.GetNodeId())
-	s.nodeMap.Remove(req.GetNodeId())
+	s.nodeMap.MarkDeregistered(nodeID)
+	s.nodeMap.Remove(nodeID)
+
+	if cs := s.state.ClusterState(); cs.Primary.NodeID == nodeID {
+		s.clearPrimary(ctx, "primary deregistered via RPC")
+	}
 
 	return &emptypb.Empty{}, nil
 }
@@ -126,7 +162,7 @@ func (s *Server) GetClusterState(_ context.Context, _ *emptypb.Empty) (resp *pro
 		return nil, status.Error(codes.Unavailable, "elector is still bootstrapping")
 	}
 
-	return s.buildClusterState(), nil
+	return nodestate.ClusterStateToProto(s.state.ClusterState()), nil
 }
 
 // SendHeartbeat receives a NodeState heartbeat from a Node, updating the
@@ -142,7 +178,7 @@ func (s *Server) SendHeartbeat(_ context.Context, req *proto.NodeState) (_ *empt
 	health := nodestate.HealthFromProto(req.GetHealthState())
 	primary := nodestate.PrimaryFromProto(req.GetPrimaryState())
 
-	if !s.nodeMap.UpdateHeartbeat(req.GetNodeId(), time.Now(), health, primary, req.GetLatestRevision()) {
+	if !s.nodeMap.UpdateHeartbeat(req.GetNodeId(), time.Now(), health, primary, req.GetLatestRevision(), req.GetStartTime()) {
 		return nil, status.Errorf(codes.NotFound, "node %s is not registered", req.GetNodeId())
 	}
 
@@ -191,23 +227,4 @@ func (s *Server) allocateOrReuseMemberID(ctx context.Context, nodeID string) (me
 	return 0, fmt.Errorf("failed to allocate member_id after %d retries", maxRetries)
 }
 
-// buildClusterState converts the current nodestate.ClusterState into a proto
-// ClusterState message.
-func (s *Server) buildClusterState() *proto.ClusterState {
-	cs := s.state.ClusterState()
-	result := &proto.ClusterState{
-		Elector: &proto.NodeInfo{
-			NodeId:               cs.Elector.NodeID,
-			MemberId:             cs.Elector.MemberID,
-			PeerAdvertiseAddress: cs.Elector.PeerAdvertiseAddr,
-		},
-	}
-	if cs.Primary.NodeID != "" {
-		result.Primary = &proto.NodeInfo{
-			NodeId:               cs.Primary.NodeID,
-			MemberId:             cs.Primary.MemberID,
-			PeerAdvertiseAddress: cs.Primary.PeerAdvertiseAddr,
-		}
-	}
-	return result
-}
+
