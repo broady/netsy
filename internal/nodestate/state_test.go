@@ -35,7 +35,7 @@ func TestHealthTransitions(t *testing.T) {
 		{"loading->healthy", HealthLoading, HealthHealthy, false},
 		{"healthy->degraded", HealthHealthy, HealthDegraded, false},
 		{"degraded->loading", HealthDegraded, HealthLoading, false},
-		{"loading->degraded", HealthLoading, HealthDegraded, true},
+		{"loading->degraded", HealthLoading, HealthDegraded, false},
 		{"healthy->loading", HealthHealthy, HealthLoading, true},
 		{"degraded->healthy", HealthDegraded, HealthHealthy, true},
 	}

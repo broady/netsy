@@ -14,7 +14,7 @@ const (
 
 // validHealthTransitions defines the set of allowed state changes.
 var validHealthTransitions = map[HealthState][]HealthState{
-	HealthLoading:  {HealthHealthy},
+	HealthLoading:  {HealthHealthy, HealthDegraded},
 	HealthHealthy:  {HealthDegraded},
 	HealthDegraded: {HealthLoading},
 }

@@ -19,11 +19,13 @@ import (
 	"github.com/nadrama-com/netsy/internal/clientapi"
 	"github.com/nadrama-com/netsy/internal/config"
 	"github.com/nadrama-com/netsy/internal/datastore"
+	"github.com/nadrama-com/netsy/internal/discovery"
 	"github.com/nadrama-com/netsy/internal/elector"
 	"github.com/nadrama-com/netsy/internal/healthserver"
 	"github.com/nadrama-com/netsy/internal/localdb"
 	"github.com/nadrama-com/netsy/internal/mtls"
 	"github.com/nadrama-com/netsy/internal/nodestate"
+	"github.com/nadrama-com/netsy/internal/proto"
 	"github.com/nadrama-com/netsy/internal/snapshot"
 	"github.com/nadrama-com/netsy/internal/storage"
 	"github.com/spf13/cobra"
@@ -66,6 +68,13 @@ func NewRootCmd() *cobra.Command {
 	rootCmd.Run = func(cmd *cobra.Command, args []string) {
 		var err error
 
+		// Register signal handler early so signals during startup are
+		// captured in the buffered channel and handled once we reach
+		// the select loop.
+		sigCh := make(chan os.Signal, 1)
+		signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
+
+		// Define flags which can be used to override env vars
 		flags := config.FlagOverrides{
 			ConfigPath: flagConfig,
 			Verbose:    flagVerbose,
@@ -143,6 +152,11 @@ func NewRootCmd() *cobra.Command {
 			filteredLogger.Error("Failed to construct client API TLS config", "err", err)
 			jitterWaitThenExit(filteredLogger)
 		}
+		tlsConfigPeerClient, err := mtls.NewClientTLSConfig(tlsFiles)
+		if err != nil {
+			filteredLogger.Error("Failed to construct peer client TLS config", "err", err)
+			jitterWaitThenExit(filteredLogger)
+		}
 
 		// Create root context for all background services
 		ctx, cancel := context.WithCancel(context.Background())
@@ -181,14 +195,17 @@ func NewRootCmd() *cobra.Command {
 			"leader_addr", electionStatus.LeaderAddr,
 		)
 
-		// Configure signal handling for shutdown
-		shutdownErrsCh := make(chan error)
-		go func() {
-			sigCh := make(chan os.Signal, 1)
-			signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
-			defer signal.Stop(sigCh)
-			shutdownErrsCh <- fmt.Errorf("%s", <-sigCh)
-		}()
+		// Establish gRPC connection to the current Elector for peer RPCs
+		electorConn, err := grpc.NewClient(
+			electionStatus.LeaderAddr,
+			grpc.WithTransportCredentials(credentials.NewTLS(tlsConfigPeerClient)),
+		)
+		if err != nil {
+			filteredLogger.Error("Failed to create elector client connection", "error", err)
+			jitterWaitThenExit(filteredLogger)
+		}
+		defer electorConn.Close()
+		electorClient := proto.NewElectorClient(electorConn)
 
 		// Instantiate database
 		db := localdb.New(fmt.Sprintf("%s/db.sqlite3", c.DataDir))
@@ -261,15 +278,40 @@ func NewRootCmd() *cobra.Command {
 			os.Exit(1)
 		}
 		filteredLogger.Info("starting client (grpc) server...", "addr", c.BindClient)
+		shutdownCh := make(chan error, 1)
 		go func() {
-			shutdownErrsCh <- grpcServer.Serve(grpcListener)
+			shutdownCh <- grpcServer.Serve(grpcListener)
 		}()
 
-		// Block until a shutdown error is received (err or signal)
-		err = <-shutdownErrsCh
-		filteredLogger.Info("shutting down...")
+		// Block until SIGTERM/SIGINT or gRPC server error
+		select {
+		case sig := <-sigCh:
+			filteredLogger.Info("received signal, starting shutdown", "signal", sig.String())
+		case err := <-shutdownCh:
+			filteredLogger.Error("grpc server failed, starting shutdown", "error", err)
+		}
+		signal.Stop(sigCh)
 
-		// Cleanup and exit
+		// Mark node as degraded health
+		if err := state.SetHealth(nodestate.HealthDegraded); err != nil {
+			filteredLogger.Error("failed to transition health to degraded", "error", err)
+		}
+
+		// Create a timeout for deregistration
+		deregCtx, deregCancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer deregCancel()
+
+		// Deregister node with Elector
+		if _, err := electorClient.DeregisterNode(deregCtx, &proto.DeregisterNodeRequest{NodeId: c.NodeID}); err != nil {
+			filteredLogger.Error("deregistration RPC failed", "error", err)
+		}
+
+		// Delete node registration file in object storage
+		if err := discovery.DeleteNodeRegistration(deregCtx, storageClient, c.NodeID); err != nil {
+			filteredLogger.Error("failed to delete node registration file", "error", err)
+		}
+
+		// Close API servers and exit
 		clientApiServer.Close()
 		filteredLogger.Info("exiting")
 	}

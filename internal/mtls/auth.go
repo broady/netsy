@@ -92,6 +92,25 @@ func verifyConnection(state tls.ConnectionState, clusterID string, allowedRole R
 	return nil
 }
 
+// NewClientTLSConfig builds a client-side TLS configuration for outbound
+// peer gRPC connections. The local node presents its client certificate
+// and verifies the remote server against the cluster CA.
+func NewClientTLSConfig(tlsFiles *config.TLSFiles) (*tls.Config, error) {
+	if tlsFiles == nil {
+		return nil, fmt.Errorf("tls files missing")
+	}
+
+	return &tls.Config{
+		MinVersion:   tls.VersionTLS13,
+		MaxVersion:   tls.VersionTLS13,
+		CipherSuites: []uint16{tls.TLS_AES_256_GCM_SHA384},
+		Certificates: []tls.Certificate{
+			*tlsFiles.ClientCert,
+		},
+		RootCAs: tlsFiles.ServerCA,
+	}, nil
+}
+
 // validatePeerSubject checks that a local node certificate has the peer role and matches the expected node and cluster identity.
 func validatePeerSubject(cert *x509.Certificate, nodeID, clusterID string) error {
 	if cert == nil {

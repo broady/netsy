@@ -108,13 +108,6 @@ func (s *Server) DeregisterNode(ctx context.Context, req *proto.DeregisterNodeRe
 	s.nodeMap.MarkDeregistered(req.GetNodeId())
 	s.nodeMap.Remove(req.GetNodeId())
 
-	if err := discovery.DeleteNodeRegistration(ctx, s.store, req.GetNodeId()); err != nil {
-		s.logger.Warn("failed to delete node registration file",
-			"node_id", req.GetNodeId(),
-			"error", err,
-		)
-	}
-
 	return &emptypb.Empty{}, nil
 }
 
