@@ -139,3 +139,30 @@ func TestReplicasHeartbeatTimestamp(t *testing.T) {
 		t.Fatalf("heartbeat timestamp %d not in expected range [%d, %d]", lastHB, before, after)
 	}
 }
+
+// TestReplicasHealthyForQuorumCount verifies that only healthy Replicas with a
+// successful Receipt count toward quorum eligibility.
+func TestReplicasHealthyForQuorumCount(t *testing.T) {
+	m := NewReplicas()
+
+	healthyReceipted := m.Add("node-a")
+	healthyReceipted.SetHealth(nodestate.HealthHealthy)
+	healthyReceipted.ReceiptCount.Store(1)
+
+	healthyUnreceipted := m.Add("node-b")
+	healthyUnreceipted.SetHealth(nodestate.HealthHealthy)
+
+	degradedReceipted := m.Add("node-c")
+	degradedReceipted.SetHealth(nodestate.HealthDegraded)
+	degradedReceipted.ReceiptCount.Store(2)
+
+	if got := m.HealthyCount(); got != 2 {
+		t.Fatalf("HealthyCount() = %d, want 2", got)
+	}
+	if got := m.ReceiptedCount(); got != 2 {
+		t.Fatalf("ReceiptedCount() = %d, want 2", got)
+	}
+	if got := m.HealthyForQuorumCount(); got != 1 {
+		t.Fatalf("HealthyForQuorumCount() = %d, want 1", got)
+	}
+}

@@ -102,6 +102,8 @@ func (s *Sender) Run(ctx context.Context) {
 	wg.Wait()
 }
 
+// runElectorLoop sends heartbeats to the Elector on the configured cadence
+// until the context is cancelled.
 func (s *Sender) runElectorLoop(ctx context.Context) {
 	ticker := time.NewTicker(s.electorInterval)
 	defer ticker.Stop()
@@ -116,6 +118,8 @@ func (s *Sender) runElectorLoop(ctx context.Context) {
 	}
 }
 
+// runPrimaryLoop sends standalone heartbeats to the Primary only when a recent
+// Receipt has not already satisfied the replication heartbeat cadence.
 func (s *Sender) runPrimaryLoop(ctx context.Context) {
 	ticker := time.NewTicker(s.replicationInterval)
 	defer ticker.Stop()
@@ -130,6 +134,8 @@ func (s *Sender) runPrimaryLoop(ctx context.Context) {
 	}
 }
 
+// sendToElector sends one heartbeat to the current Elector, retrying once
+// immediately before self-degrading this node.
 func (s *Sender) sendToElector(ctx context.Context) {
 	cs := s.state.ClusterState()
 	client := s.peers.ElectorClient()
@@ -144,8 +150,21 @@ func (s *Sender) sendToElector(ctx context.Context) {
 	defer cancel()
 
 	if _, err := client.SendHeartbeat(sendCtx, ns); err != nil {
-		s.logger.Warn("failed to send heartbeat to elector", "error", err)
-		return
+		s.logger.Warn("failed to send heartbeat",
+			"target", "elector",
+			"attempt", 1,
+			"error", err,
+		)
+
+		if _, err := client.SendHeartbeat(sendCtx, ns); err != nil {
+			s.logger.Warn("failed to send heartbeat",
+				"target", "elector",
+				"attempt", 2,
+				"error", err,
+			)
+			s.degradeSelf("elector heartbeat failed after retry", err)
+			return
+		}
 	}
 
 	// When Elector == Primary, this heartbeat satisfies both since the
@@ -156,6 +175,8 @@ func (s *Sender) sendToElector(ctx context.Context) {
 	}
 }
 
+// sendToPrimaryIfNeeded sends a standalone heartbeat to the Primary when the
+// replication heartbeat cadence has elapsed without a recent Receipt.
 func (s *Sender) sendToPrimaryIfNeeded(ctx context.Context) {
 	cs := s.state.ClusterState()
 
@@ -198,10 +219,25 @@ func (s *Sender) sendToPrimaryIfNeeded(ctx context.Context) {
 	defer cancel()
 
 	if _, err := client.SendHeartbeat(sendCtx, ns); err != nil {
-		s.logger.Warn("failed to send heartbeat to primary", "error", err)
+		s.logger.Warn("failed to send heartbeat",
+			"target", "primary",
+			"attempt", 1,
+			"error", err,
+		)
+
+		if _, err := client.SendHeartbeat(sendCtx, ns); err != nil {
+			s.logger.Warn("failed to send heartbeat",
+				"target", "primary",
+				"attempt", 2,
+				"error", err,
+			)
+			s.degradeSelf("primary heartbeat failed after retry", err)
+		}
 	}
 }
 
+// BuildNodeState constructs the heartbeat payload sent to the Elector or
+// Primary, using the latest local revision when available.
 func (s *Sender) BuildNodeState() *proto.NodeState {
 	latestRevision, err := s.db.LatestRevision()
 	if err != nil {
@@ -216,4 +252,25 @@ func (s *Sender) BuildNodeState() *proto.NodeState {
 		LatestRevision: latestRevision,
 		StartTime:      s.startTime,
 	}
+}
+
+// degradeSelf transitions this node to Degraded once and logs the cause.
+func (s *Sender) degradeSelf(reason string, cause error) {
+	if s.state.Health() == nodestate.HealthDegraded {
+		return
+	}
+
+	if err := s.state.SetHealth(nodestate.HealthDegraded); err != nil {
+		s.logger.Warn("failed to self-degrade after heartbeat failure",
+			"reason", reason,
+			"cause", cause,
+			"error", err,
+		)
+		return
+	}
+
+	s.logger.Warn("node self-degraded after heartbeat failure",
+		"reason", reason,
+		"cause", cause,
+	)
 }

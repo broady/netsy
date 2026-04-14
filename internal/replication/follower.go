@@ -45,6 +45,10 @@ type Follower struct {
 	cancel              context.CancelFunc
 	requireInitialSync  bool
 	initialSyncWaiterCh chan error
+
+	lagCheckMu     sync.Mutex
+	lagCheckCancel context.CancelFunc
+	lagCheckSeq    uint64
 }
 
 // NewFollower creates a new replication Follower.
@@ -117,9 +121,8 @@ func (f *Follower) Start(parent context.Context) error {
 // is not running.
 func (f *Follower) Stop() {
 	f.mu.Lock()
-	defer f.mu.Unlock()
-
 	if f.cancel == nil {
+		f.mu.Unlock()
 		return
 	}
 
@@ -127,6 +130,9 @@ func (f *Follower) Stop() {
 	f.cancel()
 	f.cancel = nil
 	f.initialSyncWaiterCh = nil
+	f.mu.Unlock()
+
+	f.cancelCommittedRevisionLagCheck()
 	f.logger.Info("follower stopped")
 
 	if waitCh != nil {
@@ -270,6 +276,8 @@ func (f *Follower) processStream(stream proto.Primary_FollowClient, initialResul
 	}
 }
 
+// finishInitialSyncWait unblocks the bootstrap caller waiting for the first
+// stream outcome and clears the waiter when it still matches the active one.
 func (f *Follower) finishInitialSyncWait(waitCh chan error, err error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -330,21 +338,41 @@ func (f *Follower) handleRecord(stream proto.Primary_FollowClient, record *proto
 		Revision:  record.GetRevision(),
 		Heartbeat: f.heartbeatSender.BuildNodeState(),
 	}
+
 	if err := stream.Send(receipt); err != nil {
-		return err
+		f.logger.Warn("failed to send receipt",
+			"attempt", 1,
+			"revision", receipt.GetRevision(),
+			"error", err,
+		)
+
+		if err := stream.Send(receipt); err != nil {
+			f.logger.Warn("failed to send receipt",
+				"attempt", 2,
+				"revision", receipt.GetRevision(),
+				"error", err,
+			)
+			f.degradeSelf("receipt send failed after retry", err)
+			return err
+		}
 	}
 
 	f.heartbeatSender.MarkReceiptSent()
 	return nil
 }
 
-// handleCommit advances the local committed revision and notifies the
-// watch subsystem so buffered records up to this revision can be delivered.
+// handleCommit advances the local committed revision, notifies the watch
+// subsystem so buffered records up to this revision can be delivered, and
+// schedules replica lag checking once the node is Healthy.
 func (f *Follower) handleCommit(committedRevision int64) {
 	f.state.SetCommitted(committedRevision)
 
 	if f.watchNotifier != nil {
 		f.watchNotifier.AdvanceCommittedRevision(committedRevision)
+	}
+
+	if f.state.Health() == nodestate.HealthHealthy {
+		f.scheduleCommittedRevisionLagCheck(committedRevision)
 	}
 }
 

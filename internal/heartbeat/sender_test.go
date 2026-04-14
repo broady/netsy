@@ -160,3 +160,19 @@ func TestSendToElectorSetsLastReceiptWhenSameNode(t *testing.T) {
 	// (returns early).
 	s.sendToElector(context.Background())
 }
+
+// TestDegradeSelfTransitionsHealth verifies explicit self-degradation updates
+// the node health state.
+func TestDegradeSelfTransitionsHealth(t *testing.T) {
+	state := nodestate.New(slog.Default())
+	if err := state.SetHealth(nodestate.HealthHealthy); err != nil {
+		t.Fatalf("SetHealth(Healthy) error = %v", err)
+	}
+
+	s := newTestSender("test-node", state)
+	s.degradeSelf("test failure", nil)
+
+	if state.Health() != nodestate.HealthDegraded {
+		t.Fatalf("Health() = %s, want %s", state.Health(), nodestate.HealthDegraded)
+	}
+}

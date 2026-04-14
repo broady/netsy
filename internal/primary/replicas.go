@@ -148,6 +148,47 @@ func (m *Replicas) All() []*Replica {
 	return entries
 }
 
+// HealthyCount returns the number of Replicas currently reporting the Healthy
+// health state, regardless of whether they have receipted a write yet.
+func (m *Replicas) HealthyCount() int {
+	count := 0
+	for _, entry := range m.All() {
+		if entry.Health() == nodestate.HealthHealthy {
+			count++
+		}
+	}
+	return count
+}
+
+// ReceiptedCount returns the number of Replicas that have successfully sent at
+// least one Receipt to the Primary.
+func (m *Replicas) ReceiptedCount() int {
+	count := 0
+	for _, entry := range m.All() {
+		if entry.ReceiptCount.Load() > 0 {
+			count++
+		}
+	}
+	return count
+}
+
+// HealthyForQuorumCount returns the number of Replicas eligible to count
+// toward quorum decisions: they must be Healthy and have receipted at least
+// once.
+func (m *Replicas) HealthyForQuorumCount() int {
+	count := 0
+	for _, entry := range m.All() {
+		if entry.Health() != nodestate.HealthHealthy {
+			continue
+		}
+		if entry.ReceiptCount.Load() == 0 {
+			continue
+		}
+		count++
+	}
+	return count
+}
+
 // UpdateHeartbeat updates a Replica's heartbeat timestamp and state
 // atomically. This is the single code path shared by standalone
 // Heartbeats and Receipt-embedded Heartbeats. It returns false if the
