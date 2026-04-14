@@ -14,11 +14,10 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/nadrama-com/netsy/internal"
+	"github.com/nadrama-com/netsy/internal/bootstrap"
 	"github.com/nadrama-com/netsy/internal/buildvars"
 	"github.com/nadrama-com/netsy/internal/clientapi"
 	"github.com/nadrama-com/netsy/internal/config"
-	"github.com/nadrama-com/netsy/internal/datastore"
 	"github.com/nadrama-com/netsy/internal/discovery"
 	"github.com/nadrama-com/netsy/internal/elector"
 	"github.com/nadrama-com/netsy/internal/healthserver"
@@ -191,50 +190,13 @@ func NewRootCmd() *cobra.Command {
 			jitterWaitThenExit(filteredLogger)
 		}
 
-		// Backfill and verify database
-		latestRevision, err := db.LatestRevision()
-		if err != nil {
-			filteredLogger.Error("db.LatestRevision error", "error", err)
-			jitterWaitThenExit(filteredLogger)
-		}
+		// Construct the snapshot worker early so the Primary server can hold a
+		// stable reference to it during bootstrap and later role transitions.
+		snapshotWorker := snapshot.NewWorker(filteredLogger, c, db, storageClient)
+		defer snapshotWorker.Stop()
 
-		// Get latest snapshot info
-		var snapshotWorker *snapshot.Worker
-		var latestSnapshotInfo *datastore.LatestSnapshotInfo
-		latestSnapshotInfo, err = datastore.GetLatestSnapshot(context.Background(), storageClient)
-		if err != nil {
-			filteredLogger.Error("Failed to get latest snapshot info", "error", err)
-			os.Exit(1)
-		}
-
-		snapshotWorker = snapshot.NewWorker(filteredLogger, c, db, storageClient)
-		snapshotWorker.InitializeWithSnapshot(latestSnapshotInfo)
-
-		// Ensure snapshot worker is stopped on shutdown
-		defer func() {
-			filteredLogger.Info("shutting down snapshot worker")
-			snapshotWorker.Stop()
-		}()
-
-		err = internal.Backfill(filteredLogger, db, c, latestRevision, latestSnapshotInfo, storageClient)
-		if err != nil {
-			filteredLogger.Error("clientServer.Backfill error", "error", err)
-			jitterWaitThenExit(filteredLogger)
-		}
-		err = db.VerifyIntegrity()
-		if err != nil {
-			filteredLogger.Error("clientServer.db.VerifyIntegrity error", "error", err)
-			jitterWaitThenExit(filteredLogger)
-		}
-
-		// Start snapshot worker after backfill is complete
-		snapshotWorker.Start()
-
-		// Seed the revision tracker from the local database latest revision.
-		state.SetCommitted(latestRevision)
-
-		// Create Primary server (transaction processing, replication, heartbeat collection)
-		// TODO: only do this once node has been elected as the Primary by the Elector
+		// Construct the Primary server before bootstrap so the same instance can
+		// be wired into peer/client services now and activated later on election.
 		primarySrv, err := primary.NewServer(
 			filteredLogger.With("component", "primary"),
 			c,
@@ -258,6 +220,23 @@ func NewRootCmd() *cobra.Command {
 			state,
 		)
 		defer peerManager.Close()
+
+		// Construct the client API server before bootstrap so its watch
+		// notifier can be used by the replication follower, but do not
+		// start serving client traffic until bootstrap completes.
+		gopts := []grpc.ServerOption{
+			grpc.KeepaliveEnforcementPolicy(keepalive.EnforcementPolicy{
+				MinTime:             embed.DefaultGRPCKeepAliveMinTime,
+				PermitWithoutStream: false,
+			}),
+			grpc.KeepaliveParams(keepalive.ServerParameters{
+				Time:    embed.DefaultGRPCKeepAliveInterval,
+				Timeout: embed.DefaultGRPCKeepAliveTimeout,
+			}),
+		}
+		gopts = append(gopts, grpc.Creds(credentials.NewTLS(tlsConfigClientAPI)))
+		grpcServer := grpc.NewServer(gopts...)
+		clientApiServer := clientapi.NewServer(filteredLogger, c, db, grpcServer, primarySrv, state)
 
 		// Start elector — s3lect election, health server, and elector service.
 		// Created after DB and peer manager so all election dependencies are
@@ -289,8 +268,23 @@ func NewRootCmd() *cobra.Command {
 			"leader_addr", electionStatus.LeaderAddr,
 		)
 
+		// s3lect returns the Elector's election-health address; peer RPCs must
+		// use the node's peer advertise address from service discovery instead.
+		electorPeerAddr := c.AdvertisePeer
+		if electionStatus.LeaderID != c.NodeID {
+			reg, err := discovery.ReadNodeRegistration(ctx, storageClient, electionStatus.LeaderID)
+			if err != nil {
+				filteredLogger.Error("Failed to resolve elector peer address from service discovery",
+					"leader_id", electionStatus.LeaderID,
+					"error", err,
+				)
+				jitterWaitThenExit(filteredLogger)
+			}
+			electorPeerAddr = reg.PeerAdvertiseAddress
+		}
+
 		// Connect to the current Elector for peer RPCs
-		if err := peerManager.ConnectElector(electionStatus.LeaderID, electionStatus.LeaderAddr); err != nil {
+		if err := peerManager.ConnectElector(electionStatus.LeaderID, electorPeerAddr); err != nil {
 			filteredLogger.Error("Failed to connect to elector", "error", err)
 			jitterWaitThenExit(filteredLogger)
 		}
@@ -307,6 +301,36 @@ func NewRootCmd() *cobra.Command {
 			c.Replication.HeartbeatInterval.Duration,
 		)
 		go heartbeatSender.Run(ctx)
+
+		// Create the replication follower.
+		follower := replication.NewFollower(
+			filteredLogger.With("component", "follower"),
+			c.NodeID,
+			state,
+			peerManager,
+			db,
+			heartbeatSender,
+			clientApiServer,
+		)
+
+		// Complete node loading and backfill before serving client traffic.
+		bootstrapResult, err := bootstrap.Run(
+			ctx,
+			filteredLogger.With("component", "bootstrap"),
+			c,
+			state,
+			db,
+			storageClient,
+			peerManager,
+			electionRunner,
+			follower,
+		)
+		if err != nil {
+			filteredLogger.Error("bootstrap failed", "error", err)
+			jitterWaitThenExit(filteredLogger)
+		}
+		snapshotWorker.InitializeWithSnapshot(bootstrapResult.LatestSnapshotInfo)
+		snapshotWorker.Start()
 
 		// Create Node gRPC server
 		nodeSrv := node.NewServer(
@@ -337,20 +361,8 @@ func NewRootCmd() *cobra.Command {
 			peerShutdownCh <- peerGRPCServer.Serve(peerListener)
 		}()
 
-		// Setup and run gRPC server with (etcd-compatible) client API
-		gopts := []grpc.ServerOption{
-			grpc.KeepaliveEnforcementPolicy(keepalive.EnforcementPolicy{
-				MinTime:             embed.DefaultGRPCKeepAliveMinTime,
-				PermitWithoutStream: false,
-			}),
-			grpc.KeepaliveParams(keepalive.ServerParameters{
-				Time:    embed.DefaultGRPCKeepAliveInterval,
-				Timeout: embed.DefaultGRPCKeepAliveTimeout,
-			}),
-		}
-		gopts = append(gopts, grpc.Creds(credentials.NewTLS(tlsConfigClientAPI)))
-		grpcServer := grpc.NewServer(gopts...)
-		clientApiServer := clientapi.NewServer(filteredLogger, c, db, grpcServer, primarySrv, state)
+		// Run gRPC server with the etcd-compatible client API after the
+		// node has completed bootstrap and become Healthy.
 		grpcListener, err := net.Listen("tcp", c.BindClient)
 		if err != nil {
 			filteredLogger.Error("Unable to create gRPC server listener", "err", err)
@@ -362,17 +374,6 @@ func NewRootCmd() *cobra.Command {
 			shutdownCh <- grpcServer.Serve(grpcListener)
 		}()
 
-		// Create the replication follower.
-		follower := replication.NewFollower(
-			filteredLogger.With("component", "follower"),
-			c.NodeID,
-			state,
-			peerManager,
-			db,
-			heartbeatSender,
-			clientApiServer,
-		)
-
 		// Wire role change hooks so the follower and primary services
 		// are started and stopped on leadership transitions.
 		peerManager.SetPrimaryChangeFunc(func(isPrimary bool) {
@@ -381,13 +382,19 @@ func NewRootCmd() *cobra.Command {
 				primarySrv.StartServices(ctx)
 			} else {
 				primarySrv.StopServices()
-				follower.Start(ctx)
+				if err := follower.Start(ctx); err != nil {
+					filteredLogger.Error("failed to start follower", "error", err)
+				}
 			}
 		})
 
-		// Start the follower initially — it will skip connecting if
-		// this node is already the Primary.
-		follower.Start(ctx)
+		// Bootstrap may already have established that this node is the current
+		// Primary, so start Primary services immediately in that case.
+		if state.ClusterState().Primary.NodeID == c.NodeID {
+			// TODO: Replace this direct service start with Phase 15 Primary
+			// preflight (Starting -> preflight -> Active) before activation.
+			primarySrv.StartServices(ctx)
+		}
 
 		// Block until SIGTERM/SIGINT or gRPC server error
 		select {

@@ -4,18 +4,22 @@
 package localdb
 
 import (
+	"bytes"
 	"database/sql"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/nadrama-com/netsy/internal/proto"
 	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
-// ReplicateRecord is used when receing a copy of the latest Record record from a leader,
-// or when backfilling records. It differs significantly from the InsertRecord function,
-// in that no validation is performed on the fields and there is no handling of revision
-// incrementation - meaning you must be extremely careful when using this function.
+// ReplicateRecord copies an authoritative record into SQLite during live
+// replication or object-storage backfill. It preserves the incoming revision
+// and compaction metadata, stamps replicated_at locally, and treats exact
+// duplicate copies as idempotent. It does not validate record semantics or
+// allocate revisions, so callers must only use it with records from an
+// authoritative source.
 func (db *database) ReplicateRecord(record *proto.Record) (*proto.Record, error) {
 	// do not allow zero values for revision
 	if record.Revision == 0 {
@@ -53,27 +57,29 @@ func (db *database) ReplicateRecord(record *proto.Record) (*proto.Record, error)
 		`?9, ` + // dek
 		`?10, ` + // value
 		`?11, ` + // created_at
-		`NULL, ` + // compacted_at
-		`?12, ` + // leader_id
-		`?13 ` + // replicated_at
+		`?12, ` + // compacted_at
+		`?13, ` + // leader_id
+		`?14 ` + // replicated_at
 		`) RETURNING *`
 
 	// insert record
 	var createdAtStr string
+	var compactedAtStr interface{}
 	var replicatedAtStr interface{}
 	if record.CreatedAt != nil {
 		createdAtStr = record.CreatedAt.AsTime().Format(time.RFC3339Nano)
 	}
+	if record.CompactedAt != nil {
+		compactedAtStr = record.CompactedAt.AsTime().Format(time.RFC3339Nano)
+	}
 	if record.ReplicatedAt != nil {
 		replicatedAtStr = record.ReplicatedAt.AsTime().Format(time.RFC3339Nano)
-	} else {
-		replicatedAtStr = nil
 	}
 
 	// insert record and get returned values
 	var returnedRecord proto.Record
 	var returnedCreatedAtStr string
-	var compactedAtStr, returnedReplicatedAtStr sql.NullString
+	var returnedCompactedAtStr, returnedReplicatedAtStr sql.NullString
 	err := db.conn.QueryRow(
 		query,
 		record.Revision,       // 1
@@ -87,8 +93,9 @@ func (db *database) ReplicateRecord(record *proto.Record) (*proto.Record, error)
 		record.Dek,            // 9
 		record.Value,          // 10
 		createdAtStr,          // 11
-		record.LeaderId,       // 12
-		replicatedAtStr,       // 13
+		compactedAtStr,        // 12
+		record.LeaderId,       // 13
+		replicatedAtStr,       // 14
 	).Scan(
 		&returnedRecord.Revision,
 		&returnedRecord.Key,
@@ -101,11 +108,23 @@ func (db *database) ReplicateRecord(record *proto.Record) (*proto.Record, error)
 		&returnedRecord.Dek,
 		&returnedRecord.Value,
 		&returnedCreatedAtStr,
-		&compactedAtStr,
+		&returnedCompactedAtStr,
 		&returnedRecord.LeaderId,
 		&returnedReplicatedAtStr,
 	)
 	if err != nil {
+		// Duplicate inserts are acceptable during replication/backfill if the
+		// existing row is semantically identical to the incoming record.
+		if strings.Contains(err.Error(), "UNIQUE constraint failed") || strings.Contains(err.Error(), "PRIMARY KEY constraint failed") {
+			existing, findErr := db.FindRecordByRev(record.GetRevision())
+			if findErr != nil {
+				return nil, fmt.Errorf("read existing revision %d after duplicate insert: %w", record.GetRevision(), findErr)
+			}
+			if !recordsEqualForReplication(existing, record) {
+				return nil, fmt.Errorf("revision %d already exists with different contents", record.GetRevision())
+			}
+			return existing, nil
+		}
 		return nil, err
 	}
 
@@ -120,8 +139,8 @@ func (db *database) ReplicateRecord(record *proto.Record) (*proto.Record, error)
 			returnedRecord.CreatedAt = timestamppb.New(t)
 		}
 	}
-	if compactedAtStr.Valid && compactedAtStr.String != "" {
-		if t, err := time.Parse(time.RFC3339Nano, compactedAtStr.String); err == nil {
+	if returnedCompactedAtStr.Valid && returnedCompactedAtStr.String != "" {
+		if t, err := time.Parse(time.RFC3339Nano, returnedCompactedAtStr.String); err == nil {
 			returnedRecord.CompactedAt = timestamppb.New(t)
 		}
 	}
@@ -132,4 +151,34 @@ func (db *database) ReplicateRecord(record *proto.Record) (*proto.Record, error)
 	}
 
 	return &returnedRecord, nil
+}
+
+// recordsEqualForReplication compares the replication-significant fields of
+// two records when deciding whether a duplicate copy is idempotent.
+func recordsEqualForReplication(a, b *proto.Record) bool {
+	if a == nil || b == nil {
+		return a == b
+	}
+
+	return a.GetRevision() == b.GetRevision() &&
+		bytes.Equal(a.GetKey(), b.GetKey()) &&
+		a.GetCreated() == b.GetCreated() &&
+		a.GetDeleted() == b.GetDeleted() &&
+		a.GetCreateRevision() == b.GetCreateRevision() &&
+		a.GetPrevRevision() == b.GetPrevRevision() &&
+		a.GetVersion() == b.GetVersion() &&
+		a.GetLease() == b.GetLease() &&
+		a.GetDek() == b.GetDek() &&
+		bytes.Equal(a.GetValue(), b.GetValue()) &&
+		a.GetLeaderId() == b.GetLeaderId() &&
+		sameTimestamp(a.GetCreatedAt(), b.GetCreatedAt()) &&
+		sameTimestamp(a.GetCompactedAt(), b.GetCompactedAt())
+}
+
+// sameTimestamp compares protobuf timestamps while preserving nil semantics.
+func sameTimestamp(a, b *timestamppb.Timestamp) bool {
+	if a == nil || b == nil {
+		return a == b
+	}
+	return a.AsTime().Equal(b.AsTime())
 }

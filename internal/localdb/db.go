@@ -16,11 +16,18 @@ type database struct {
 	conn *sql.DB
 }
 
+// Database is the subset of local SQLite behaviour needed by the node,
+// replication, bootstrap, and snapshot layers.
 type Database interface {
 	Connect() error
 	LatestRevision() (int64, error)
+	RecordCount() (int64, error)
 	GetRevision(findRevision int64) (revision int64, compacted bool, compactedAt sql.NullString, err error)
 	VerifyIntegrity() error
+	Truncate() error
+	LatestCompactionRevision() (int64, error)
+	DeriveCompactionRevision() (int64, error)
+	PersistCompactionRevision(revision int64) error
 	FindRecordsBy(whereQuery string, whereArgs []any, revision int64, limit int64, order string) ([]*proto.Record, int64, int64, error)
 	FindRecordByRev(revision int64) (*proto.Record, error)
 	FindAllRecordsForSnapshot(upToRevision int64) ([]*proto.Record, error)
@@ -51,6 +58,18 @@ func (db *database) LatestRevision() (int64, error) {
 	return revision, nil
 }
 
+// RecordCount returns the total number of rows in the records table.
+func (db *database) RecordCount() (int64, error) {
+	const query = "SELECT COUNT(*) FROM records"
+
+	var count int64
+	if err := db.conn.QueryRow(query).Scan(&count); err != nil {
+		return 0, err
+	}
+
+	return count, nil
+}
+
 func (db *database) GetRevision(findRevision int64) (revision int64, compacted bool, compactedAt sql.NullString, err error) {
 	query := "SELECT revision,compacted_at FROM records WHERE revision = ? ORDER BY revision DESC LIMIT 1"
 	row := db.conn.QueryRow(query, findRevision)
@@ -79,6 +98,16 @@ func (db *database) VerifyIntegrity() error {
 	}
 	if total != latest {
 		return fmt.Errorf("integrity error: total records (%d) does not match latest revision (%d)", total, latest)
+	}
+	return nil
+}
+
+func (db *database) Truncate() error {
+	if _, err := db.conn.Exec("DELETE FROM records"); err != nil {
+		return err
+	}
+	if _, err := db.conn.Exec("DELETE FROM compactions"); err != nil {
+		return err
 	}
 	return nil
 }

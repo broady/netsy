@@ -16,7 +16,9 @@ import (
 	"github.com/nadrama-com/netsy/internal/config"
 	"github.com/nadrama-com/netsy/internal/nodestate"
 	"github.com/nadrama-com/netsy/internal/peerclient"
+	"github.com/nadrama-com/netsy/internal/proto"
 	"github.com/nadrama-com/netsy/internal/storage"
+	"google.golang.org/protobuf/types/known/emptypb"
 )
 
 // lockfilePath is the object storage key used by s3lect for Elector coordination.
@@ -171,6 +173,43 @@ func (r *Runner) LeaderAddr() string {
 // gRPC server externally.
 func (r *Runner) ElectorServer() *Server {
 	return r.server
+}
+
+// WaitUntilReady blocks until the local Elector server has completed its
+// bootstrap pass and can safely serve registration and cluster-state requests.
+func (r *Runner) WaitUntilReady(ctx context.Context) error {
+	ticker := time.NewTicker(10 * time.Millisecond)
+	defer ticker.Stop()
+
+	for {
+		if r.server.nodeMap.Ready() {
+			return nil
+		}
+
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-ticker.C:
+		}
+	}
+}
+
+// RegisterLocalNode registers the local node directly with the in-process
+// Elector server. This is used when the current Elector is the current node/itself.
+func (r *Runner) RegisterLocalNode(ctx context.Context, req *proto.RegisterNodeRequest) (*proto.RegisterNodeResponse, error) {
+	if err := r.WaitUntilReady(ctx); err != nil {
+		return nil, err
+	}
+	return r.server.RegisterNode(ctx, req)
+}
+
+// GetLocalClusterState returns the cluster state directly from the
+// in-process Elector server. This is used when the current Elector is self.
+func (r *Runner) GetLocalClusterState(ctx context.Context) (*proto.ClusterState, error) {
+	if err := r.WaitUntilReady(ctx); err != nil {
+		return nil, err
+	}
+	return r.server.GetClusterState(ctx, &emptypb.Empty{})
 }
 
 // Stop gracefully stops the s3lect elector and health server. The elector

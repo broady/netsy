@@ -150,3 +150,26 @@ func TestCompactionRevision(t *testing.T) {
 		t.Fatalf("expected compaction 10, got %d", s.Compaction())
 	}
 }
+
+func TestMemberIDWriteOnce(t *testing.T) {
+	s := newTestState()
+
+	if got := s.MemberID(); got != 0 {
+		t.Fatalf("initial MemberID() = %d, want 0", got)
+	}
+
+	if err := s.SetMemberID(7); err != nil {
+		t.Fatalf("SetMemberID(7) error = %v", err)
+	}
+	if got := s.MemberID(); got != 7 {
+		t.Fatalf("MemberID() = %d, want 7", got)
+	}
+
+	if err := s.SetMemberID(7); err != nil {
+		t.Fatalf("SetMemberID(7) second time error = %v", err)
+	}
+
+	if err := s.SetMemberID(8); err == nil {
+		t.Fatal("SetMemberID(8) succeeded, want error")
+	}
+}

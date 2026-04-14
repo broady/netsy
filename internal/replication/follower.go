@@ -5,6 +5,7 @@ package replication
 
 import (
 	"context"
+	"fmt"
 	"io"
 	"log/slog"
 	"sync"
@@ -40,8 +41,10 @@ type Follower struct {
 	heartbeatSender *heartbeat.Sender
 	watchNotifier   WatchNotifier
 
-	mu     sync.Mutex
-	cancel context.CancelFunc
+	mu                  sync.Mutex
+	cancel              context.CancelFunc
+	requireInitialSync  bool
+	initialSyncWaiterCh chan error
 }
 
 // NewFollower creates a new replication Follower.
@@ -65,22 +68,49 @@ func NewFollower(
 	}
 }
 
-// Start begins the Follow stream loop in a background goroutine. It
-// is a no-op if the follower is already running. The provided context
-// is used as the parent; call Stop to cancel the follower.
-func (f *Follower) Start(parent context.Context) {
+// RequireInitialSync marks the next Start call as a bootstrap start that must
+// not return until the follower has either received the Primary's Initial
+// message or determined that no remote Primary follow stream is needed.
+func (f *Follower) RequireInitialSync() {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 
+	f.requireInitialSync = true
+}
+
+// Start begins the Follow stream loop in a background goroutine. It is a
+// no-op if the follower is already running. When RequireInitialSync was called
+// beforehand, Start blocks until that initial synchronization requirement has
+// been satisfied.
+func (f *Follower) Start(parent context.Context) error {
+	f.mu.Lock()
+
+	waitCh := f.initialSyncWaiterCh
 	if f.cancel != nil {
-		return
+		f.mu.Unlock()
+		if waitCh != nil {
+			return <-waitCh
+		}
+		return nil
+	}
+
+	if f.requireInitialSync {
+		waitCh = make(chan error, 1)
+		f.initialSyncWaiterCh = waitCh
+		f.requireInitialSync = false
 	}
 
 	ctx, cancel := context.WithCancel(parent)
 	f.cancel = cancel
+	f.mu.Unlock()
 
 	go f.run(ctx)
 	f.logger.Info("follower started")
+
+	if waitCh != nil {
+		return <-waitCh
+	}
+	return nil
 }
 
 // Stop cancels the Follow stream loop. It is a no-op if the follower
@@ -93,21 +123,40 @@ func (f *Follower) Stop() {
 		return
 	}
 
+	waitCh := f.initialSyncWaiterCh
 	f.cancel()
 	f.cancel = nil
+	f.initialSyncWaiterCh = nil
 	f.logger.Info("follower stopped")
+
+	if waitCh != nil {
+		f.finishInitialSyncWait(waitCh, context.Canceled)
+	}
 }
 
 // run is the internal reconnect loop.
 func (f *Follower) run(ctx context.Context) {
+	initialPending := true
+	initialResult := f.initialWaiter()
+	if initialResult == nil {
+		initialPending = false
+	}
+
 	for {
 		select {
 		case <-ctx.Done():
+			if initialPending {
+				f.finishInitialSyncWait(initialResult, ctx.Err())
+			}
 			return
 		default:
 		}
 
-		if err := f.connectAndFollow(ctx); err != nil {
+		initialDelivered, err := f.connectAndFollow(ctx, initialResult, initialPending)
+		if initialDelivered {
+			initialPending = false
+		}
+		if err != nil {
 			f.logger.Warn("follow stream ended", "error", err)
 		}
 
@@ -119,21 +168,30 @@ func (f *Follower) run(ctx context.Context) {
 	}
 }
 
-// connectAndFollow attempts a single Follow stream session. It returns
-// when the stream ends or an error occurs.
-func (f *Follower) connectAndFollow(ctx context.Context) error {
+func (f *Follower) initialWaiter() chan error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.initialSyncWaiterCh
+}
+
+// connectAndFollow attempts one Follow stream session. The returned boolean
+// reports whether the bootstrap caller's initialResult has been satisfied.
+func (f *Follower) connectAndFollow(ctx context.Context, initialResult chan error, initialPending bool) (bool, error) {
 	cs := f.state.ClusterState()
 
 	// Skip if no Primary, or if this node is the Primary.
 	if cs.Primary.NodeID == "" || cs.Primary.NodeID == f.nodeID {
-		return nil
+		if initialPending {
+			f.finishInitialSyncWait(initialResult, nil)
+		}
+		return initialPending, nil
 	}
 
 	// Validate the Primary's state before streaming. Replicas must
 	// reject data from a node whose Primary State is Replica.
 	remoteState, err := f.peers.GetNodeState(ctx, cs.Primary.PeerAdvertiseAddr)
 	if err != nil {
-		return err
+		return false, err
 	}
 	remotePrimary := nodestate.PrimaryFromProto(remoteState.GetPrimaryState())
 	if remotePrimary == nodestate.PrimaryReplica {
@@ -141,17 +199,17 @@ func (f *Follower) connectAndFollow(ctx context.Context) error {
 			"remote_node_id", cs.Primary.NodeID,
 			"remote_primary_state", remotePrimary,
 		)
-		return nil
+		return false, fmt.Errorf("remote node %s is not acting as primary", cs.Primary.NodeID)
 	}
 
 	client := f.peers.PrimaryClient()
 	if client == nil {
-		return nil
+		return false, fmt.Errorf("primary client is not connected")
 	}
 
 	stream, err := client.Follow(ctx)
 	if err != nil {
-		return err
+		return false, err
 	}
 
 	f.logger.Info("follow stream established", "primary", cs.Primary.NodeID)
@@ -163,42 +221,79 @@ func (f *Follower) connectAndFollow(ctx context.Context) error {
 		f.watchNotifier.ResetPending()
 	}
 
-	return f.processStream(stream)
+	return f.processStream(stream, initialResult, initialPending)
 }
 
-// processStream handles all messages on an active Follow stream.
-func (f *Follower) processStream(stream proto.Primary_FollowClient) error {
+// processStream handles all messages on an active Follow stream. The returned
+// boolean reports whether the bootstrap caller's initialResult has been
+// satisfied.
+func (f *Follower) processStream(stream proto.Primary_FollowClient, initialResult chan error, initialPending bool) (bool, error) {
 	for {
 		msg, err := stream.Recv()
 		if err == io.EOF {
-			return nil
+			if initialPending {
+				return false, fmt.Errorf("follow stream ended before initial message")
+			}
+			return true, nil
 		}
 		if err != nil {
-			return err
+			return !initialPending, err
 		}
 
 		switch payload := msg.Payload.(type) {
 		case *proto.PrimaryMessage_Initial:
-			f.handleInitial(payload.Initial)
+			if err := f.handleInitial(payload.Initial); err != nil {
+				if initialPending {
+					f.finishInitialSyncWait(initialResult, err)
+					initialPending = false
+				}
+				return !initialPending, err
+			}
+			if initialPending {
+				f.finishInitialSyncWait(initialResult, nil)
+				initialPending = false
+			}
 
 		case *proto.PrimaryMessage_Record:
 			if err := f.handleRecord(stream, payload.Record); err != nil {
-				return err
+				return !initialPending, err
 			}
 
 		case *proto.PrimaryMessage_Commit:
 			f.handleCommit(payload.Commit)
 
 		case *proto.PrimaryMessage_Compact:
-			f.handleCompact(payload.Compact)
+			if err := f.handleCompact(payload.Compact); err != nil {
+				return !initialPending, err
+			}
 		}
 	}
 }
 
-// handleInitial processes the Initial message sent by the Primary at
-// the start of each Follow stream, seeding committed and compaction
-// revisions on this node.
-func (f *Follower) handleInitial(initial *proto.Initial) {
+func (f *Follower) finishInitialSyncWait(waitCh chan error, err error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	if f.initialSyncWaiterCh == waitCh {
+		f.initialSyncWaiterCh = nil
+	}
+	waitCh <- err
+}
+
+// handleInitial processes the Initial message sent by the Primary at the
+// start of each Follow stream, restoring committed state immediately and
+// durably seeding compaction state if the local node had not persisted one yet.
+func (f *Follower) handleInitial(initial *proto.Initial) error {
+	if initial.GetCompactionRevision() > 0 {
+		if current, err := f.db.LatestCompactionRevision(); err != nil {
+			return err
+		} else if current == 0 {
+			if err := f.db.PersistCompactionRevision(initial.GetCompactionRevision()); err != nil {
+				return err
+			}
+		}
+	}
+
 	f.state.SetCommitted(initial.GetCommittedRevision())
 	f.state.SetCompaction(initial.GetCompactionRevision())
 
@@ -210,6 +305,8 @@ func (f *Follower) handleInitial(initial *proto.Initial) {
 	if f.watchNotifier != nil {
 		f.watchNotifier.AdvanceCommittedRevision(initial.GetCommittedRevision())
 	}
+
+	return nil
 }
 
 // handleRecord persists a replicated record to the local database,
@@ -251,12 +348,17 @@ func (f *Follower) handleCommit(committedRevision int64) {
 	}
 }
 
-// handleCompact updates the local compaction revision to match the
-// Primary's compaction point.
-func (f *Follower) handleCompact(compactionRevision int64) {
+// handleCompact persists and applies the Primary's compaction revision update.
+func (f *Follower) handleCompact(compactionRevision int64) error {
+	if err := f.db.PersistCompactionRevision(compactionRevision); err != nil {
+		return err
+	}
+
 	f.state.SetCompaction(compactionRevision)
 
 	f.logger.Info("received compaction revision update",
 		"compaction_revision", compactionRevision,
 	)
+
+	return nil
 }

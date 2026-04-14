@@ -19,10 +19,13 @@ type State struct {
 	primary PrimaryState
 	cluster ClusterState
 
-	// committed and compaction use atomics for lock-free access since
-	// they are read on every Range request and watch delivery.
+	// committed and compaction use atomics for lock-free access because they
+	// are read on the hot path for Range and watch delivery.
 	committed  atomic.Int64
 	compaction atomic.Int64
+
+	// memberID is learned once during bootstrap and then treated as immutable.
+	memberID uint64
 }
 
 // New returns a State initialised to Loading / Follower / Replica.
@@ -131,4 +134,27 @@ func (s *State) Compaction() int64 {
 // SetCompaction sets the compaction revision.
 func (s *State) SetCompaction(rev int64) {
 	s.compaction.Store(rev)
+}
+
+// MemberID returns the local stable etcd member ID.
+func (s *State) MemberID() uint64 {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.memberID
+}
+
+// SetMemberID records the local stable etcd member ID once. Repeating the
+// same assignment is allowed; attempting to change an existing member ID is an error.
+func (s *State) SetMemberID(memberID uint64) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if s.memberID == 0 {
+		s.memberID = memberID
+		return nil
+	}
+	if s.memberID != memberID {
+		return fmt.Errorf("member_id already set to %d", s.memberID)
+	}
+	return nil
 }
