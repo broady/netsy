@@ -46,6 +46,8 @@ type Server struct {
 	preflightCancel context.CancelFunc
 	preflightID     uint64
 
+	chunkBuffer *chunkBuffer
+
 	heartbeatInterval time.Duration
 	degradationCount  int
 
@@ -71,14 +73,22 @@ func NewServer(
 	degradationCount int,
 ) (*Server, error) {
 	s := &Server{
-		logger:            logger,
-		config:            conf,
-		db:                db,
-		storageClient:     storageClient,
-		snapshotWorker:    snapshotWorker,
-		state:             state,
-		replicas:          NewReplicas(),
-		followStreams:     make(map[string]*followSession),
+		logger:         logger,
+		config:         conf,
+		db:             db,
+		storageClient:  storageClient,
+		snapshotWorker: snapshotWorker,
+		state:          state,
+		replicas:       NewReplicas(),
+		followStreams:  make(map[string]*followSession),
+		chunkBuffer: newChunkBuffer(
+			logger,
+			state,
+			storageClient,
+			conf.NodeID,
+			conf.Replication.ChunkBuffer.ThresholdSizeMB,
+			conf.Replication.ChunkBuffer.ThresholdAgeMinutes,
+		),
 		heartbeatInterval: heartbeatInterval,
 		degradationCount:  degradationCount,
 	}
@@ -105,6 +115,7 @@ func (s *Server) StartServices(parent context.Context) {
 	s.svcCancel = cancel
 
 	go s.RunDegradationLoop(ctx)
+	go s.chunkBuffer.Run(ctx)
 	s.startPreflightLocked(ctx)
 	s.logger.Info("primary services started")
 }

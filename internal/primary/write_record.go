@@ -4,7 +4,6 @@
 package primary
 
 import (
-	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -45,29 +44,14 @@ func (ps *Server) writeRecord(ctx context.Context, record *pb.Record) error {
 // writeRecordIfMissing ensures a record's chunk file exists in object storage,
 // tolerating an already-present identical file from an earlier retry.
 func (ps *Server) writeRecordIfMissing(ctx context.Context, record *pb.Record) error {
-	err := ps.writeRecord(ctx, record)
-	if err == nil {
-		return nil
-	}
-	if !errors.Is(err, errChunkAlreadyExists) {
+	key, data, err := datastore.MarshalChunk(record, ps.config.NodeID)
+	if err != nil {
 		return err
 	}
-
-	// Chunk already exists. Verify it matches what we would have written.
-	key, data, marshalErr := datastore.MarshalChunk(record, ps.config.NodeID)
-	if marshalErr != nil {
-		return marshalErr
+	if err := storage.PutIfAbsent(ctx, ps.storageClient, key, data); err != nil {
+		return err
 	}
-
-	existing, _, getErr := ps.storageClient.Get(ctx, key)
-	if getErr != nil {
-		return fmt.Errorf("read existing chunk %s after already-exists: %w", key, getErr)
-	}
-	if !bytes.Equal(existing, data) {
-		return fmt.Errorf("chunk %s already exists with different contents", key)
-	}
-
-	ps.logger.Debug("record already durable in object storage during primary preflight",
+	ps.logger.Debug("record durable in object storage",
 		"revision", record.Revision,
 		"key", key,
 	)

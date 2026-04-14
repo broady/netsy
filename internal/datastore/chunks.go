@@ -32,6 +32,28 @@ func MarshalChunk(record *pb.Record, nodeID string) (key string, data []byte, er
 	return ChunkKey(record.Revision), buf.Bytes(), nil
 }
 
+// MarshalChunkBatch serialises multiple records into one chunk datafile with
+// smart compression, keyed by the highest revision in the batch.
+func MarshalChunkBatch(records []*pb.Record, nodeID string) (key string, data []byte, err error) {
+	if len(records) == 0 {
+		return "", nil, fmt.Errorf("marshal chunk batch: empty record set")
+	}
+	var buf bytes.Buffer
+	w, err := datafile.NewWriterWithSmartCompression(bufio.NewWriter(&buf), pb.FileKind_KIND_CHUNK, records, nodeID)
+	if err != nil {
+		return "", nil, fmt.Errorf("create datafile writer: %w", err)
+	}
+	for _, record := range records {
+		if err := w.Write(record); err != nil {
+			return "", nil, fmt.Errorf("write record %d: %w", record.GetRevision(), err)
+		}
+	}
+	if err := w.Close(); err != nil {
+		return "", nil, fmt.Errorf("close datafile writer: %w", err)
+	}
+	return ChunkKey(records[len(records)-1].GetRevision()), buf.Bytes(), nil
+}
+
 // ChunkKey generates the object storage key for a chunk file
 func ChunkKey(revision int64) string {
 	// Format: chunks/{partition}/{zero-padded-revision}.netsy

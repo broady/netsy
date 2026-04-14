@@ -4,7 +4,10 @@
 package storage
 
 import (
+	"bytes"
 	"context"
+	"errors"
+	"fmt"
 	"io"
 
 	"github.com/nadrama-com/s3lect"
@@ -51,4 +54,26 @@ type ObjectStorage interface {
 
 	// List returns all object keys matching the given prefix.
 	List(ctx context.Context, prefix string) ([]ObjectInfo, error)
+}
+
+// PutIfAbsent creates an object only if it does not already exist. If the
+// object already exists with identical contents, it returns nil. If it exists
+// with different contents, it returns an error.
+func PutIfAbsent(ctx context.Context, store ObjectStorage, key string, data []byte) error {
+	err := store.PutIfMatch(ctx, key, data, "")
+	if err == nil {
+		return nil
+	}
+	if !errors.Is(err, ErrPrecondition) {
+		return fmt.Errorf("object storage upload %s: %w", key, err)
+	}
+
+	existing, _, getErr := store.Get(ctx, key)
+	if getErr != nil {
+		return fmt.Errorf("read existing object %s after already-exists: %w", key, getErr)
+	}
+	if !bytes.Equal(existing, data) {
+		return fmt.Errorf("object %s already exists with different contents", key)
+	}
+	return nil
 }
