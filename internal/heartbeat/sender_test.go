@@ -37,7 +37,7 @@ func TestBuildNodeState(t *testing.T) {
 		time.Second,
 	)
 
-	ns := s.buildNodeState()
+	ns := s.BuildNodeState()
 
 	if ns.NodeId != "test-node" {
 		t.Fatalf("expected node_id test-node, got %s", ns.NodeId)

@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log/slog"
 	"sync"
+	"sync/atomic"
 )
 
 // State holds the current node state triple and enforces valid transitions.
@@ -17,6 +18,11 @@ type State struct {
 	elector ElectorState
 	primary PrimaryState
 	cluster ClusterState
+
+	// committed and compaction use atomics for lock-free access since
+	// they are read on every Range request and watch delivery.
+	committed  atomic.Int64
+	compaction atomic.Int64
 }
 
 // New returns a State initialised to Loading / Follower / Replica.
@@ -105,4 +111,24 @@ func (s *State) SetPrimary(to PrimaryState) error {
 		"new", string(to),
 	)
 	return nil
+}
+
+// Committed returns the current committed revision.
+func (s *State) Committed() int64 {
+	return s.committed.Load()
+}
+
+// SetCommitted sets the committed revision.
+func (s *State) SetCommitted(rev int64) {
+	s.committed.Store(rev)
+}
+
+// Compaction returns the current compaction revision.
+func (s *State) Compaction() int64 {
+	return s.compaction.Load()
+}
+
+// SetCompaction sets the compaction revision.
+func (s *State) SetCompaction(rev int64) {
+	s.compaction.Store(rev)
 }

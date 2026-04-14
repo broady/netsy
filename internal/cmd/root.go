@@ -30,6 +30,7 @@ import (
 	"github.com/nadrama-com/netsy/internal/peerclient"
 	"github.com/nadrama-com/netsy/internal/primary"
 	"github.com/nadrama-com/netsy/internal/proto"
+	"github.com/nadrama-com/netsy/internal/replication"
 	"github.com/nadrama-com/netsy/internal/snapshot"
 	"github.com/nadrama-com/netsy/internal/storage"
 	"github.com/spf13/cobra"
@@ -229,6 +230,9 @@ func NewRootCmd() *cobra.Command {
 		// Start snapshot worker after backfill is complete
 		snapshotWorker.Start()
 
+		// Seed the revision tracker from the local database latest revision.
+		state.SetCommitted(latestRevision)
+
 		// Create Primary server (transaction processing, replication, heartbeat collection)
 		// TODO: only do this once node has been elected as the Primary by the Elector
 		primarySrv, err := primary.NewServer(
@@ -346,7 +350,7 @@ func NewRootCmd() *cobra.Command {
 		}
 		gopts = append(gopts, grpc.Creds(credentials.NewTLS(tlsConfigClientAPI)))
 		grpcServer := grpc.NewServer(gopts...)
-		clientApiServer := clientapi.NewServer(filteredLogger, c, db, grpcServer, primarySrv)
+		clientApiServer := clientapi.NewServer(filteredLogger, c, db, grpcServer, primarySrv, state)
 		grpcListener, err := net.Listen("tcp", c.BindClient)
 		if err != nil {
 			filteredLogger.Error("Unable to create gRPC server listener", "err", err)
@@ -357,6 +361,33 @@ func NewRootCmd() *cobra.Command {
 		go func() {
 			shutdownCh <- grpcServer.Serve(grpcListener)
 		}()
+
+		// Create the replication follower.
+		follower := replication.NewFollower(
+			filteredLogger.With("component", "follower"),
+			c.NodeID,
+			state,
+			peerManager,
+			db,
+			heartbeatSender,
+			clientApiServer,
+		)
+
+		// Wire role change hooks so the follower and primary services
+		// are started and stopped on leadership transitions.
+		peerManager.SetPrimaryChangeFunc(func(isPrimary bool) {
+			if isPrimary {
+				follower.Stop()
+				primarySrv.StartServices(ctx)
+			} else {
+				primarySrv.StopServices()
+				follower.Start(ctx)
+			}
+		})
+
+		// Start the follower initially — it will skip connecting if
+		// this node is already the Primary.
+		follower.Start(ctx)
 
 		// Block until SIGTERM/SIGINT or gRPC server error
 		select {

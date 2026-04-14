@@ -1,6 +1,8 @@
 // Copyright 2026 Nadrama Pty Ltd
 // SPDX-License-Identifier: Apache-2.0
 
-// Package nodestate tracks the three state fields every Node carries:
-// Health, Elector, and Primary. Transitions are validated and logged.
+// Package nodestate tracks per-node runtime state: the Health, Elector,
+// and Primary state triple, the current Cluster State, and the
+// Committed Revision and Compaction Revision used to gate client-visible
+// range requests and watches.
 package nodestate

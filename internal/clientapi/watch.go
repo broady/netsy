@@ -1,10 +1,10 @@
-// Copyright 2025 Nadrama Pty Ltd
+// Copyright 2026 Nadrama Pty Ltd
 // SPDX-License-Identifier: Apache-2.0
 
 package clientapi
 
-// glossory
-// watcher - watchers represents a single gRPC bidrectional stream client
+// glossary
+// watcher - watchers represents a single gRPC bidirectional stream client
 //           e.g. kube-apiserver
 // watch   - watches range on/track specific events. multiple per watcher.
 //           e.g. multiple `kubectl watch` commands connected to a
@@ -15,6 +15,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"log/slog"
 	"sync"
 	"sync/atomic"
 
@@ -67,11 +68,11 @@ type watcher struct {
 	progress map[int64]bool
 }
 
-// Cleanup is used to cleanup a watcher
+// Cleanup is used to cleanup a watcher.
 // It closes/cancels any watches and related progress channels,
-// then removes itself from the watchers map
-func (w *watcher) Cleanup(watcherID int64) {
-	fmt.Printf("watcher.Cleanup(%d)\n", watcherID)
+// then removes itself from the watchers map.
+func (w *watcher) Cleanup(watcherID int64, logger *slog.Logger) {
+	logger.Debug("watcher cleanup", "watcher_id", watcherID)
 
 	// obtain watcher write lock and release at end of the function
 	w.Lock()
@@ -119,9 +120,9 @@ type watch struct {
 // atomic.AddInt64 is used to increment it while a lock is held
 var watchIDCounter int64
 
-// CreateWatch handles watch create requests
-func (w *watcher) CreateWatch(r *pb.WatchCreateRequest, latestRevision int64, getRevision func(findRevision int64) (revision int64, compacted bool, compactedAt sql.NullString, err error)) {
-	fmt.Printf("CreateWatch(%d)\n", w.id)
+// CreateWatch handles watch create requests.
+func (w *watcher) CreateWatch(r *pb.WatchCreateRequest, latestRevision int64, getRevision func(findRevision int64) (revision int64, compacted bool, compactedAt sql.NullString, err error), logger *slog.Logger) {
+	logger.Debug("create watch", "watcher_id", w.id)
 
 	respHeader := &pb.ResponseHeader{
 		Revision: latestRevision,
@@ -129,7 +130,7 @@ func (w *watcher) CreateWatch(r *pb.WatchCreateRequest, latestRevision int64, ge
 
 	// do not support user-provided watch IDs
 	if r.WatchId != clientv3.AutoWatchID {
-		fmt.Printf("user-provided watch IDs ('%d') are unsupported", r.WatchId)
+		logger.Warn("user-provided watch IDs are unsupported", "watch_id", r.WatchId)
 		_ = w.client.Send(&pb.WatchResponse{
 			Header:  respHeader,
 			Created: true,
@@ -150,8 +151,8 @@ func (w *watcher) CreateWatch(r *pb.WatchCreateRequest, latestRevision int64, ge
 	// get cancel function associated with watch server
 	_, cancelFunc := context.WithCancel(w.client.Context())
 
-	// check if start revision exists or has been compacted
-	// if it is set to zero, use latest revision and do not return error
+	// Check if start revision exists or has been compacted.
+	// If set to zero, use latest (committed) revision.
 	var revision int64
 	var compacted bool
 	var err error
@@ -175,7 +176,7 @@ func (w *watcher) CreateWatch(r *pb.WatchCreateRequest, latestRevision int64, ge
 			revision = latestRevision
 		}
 		if cancelReason != "" {
-			fmt.Printf("CreateWatch() failed: %s\n", cancelReason)
+			logger.Debug("create watch failed", "reason", cancelReason, "start_revision", r.StartRevision)
 			w.client.Send(&pb.WatchResponse{
 				Header:  respHeader,
 				Created: true,
@@ -225,18 +226,18 @@ func (w *watcher) CreateWatch(r *pb.WatchCreateRequest, latestRevision int64, ge
 		WatchId: watchID,
 	}); err != nil {
 		// cancel watch if unable to send ack
-		w.CancelWatch(watchID, revision, err)
+		w.CancelWatch(watchID, revision, err, logger)
 		return
 	}
 }
 
 // CancelWatch handles watch cancel requests for a watch server instance.
-// note that it may be called from multiple different go routines.
-// arguments:
-// * revision - latest known revision to place in response header.
-// * reason - if watch is being cancelled due to an an unexpected error.
-func (w *watcher) CancelWatch(watchID int64, revision int64, reason error) {
-	fmt.Printf("CancelWatch()\n")
+// It may be called from multiple different goroutines.
+// Arguments:
+//   - revision: latest known revision to place in response header.
+//   - reason: if watch is being cancelled due to an unexpected error.
+func (w *watcher) CancelWatch(watchID int64, revision int64, reason error, logger *slog.Logger) {
+	logger.Debug("cancel watch", "watcher_id", w.id, "watch_id", watchID)
 
 	// remove watchID from watcher
 	// obtain write lock, cancel, delete, then release lock immediately
@@ -262,8 +263,7 @@ func (w *watcher) CancelWatch(watchID int64, revision int64, reason error) {
 		WatchId:      watchID,
 	})
 	if err != nil && reason != nil && !clientv3.IsConnCanceled(err) {
-		// TODO better error logging
-		fmt.Printf("error: failed to send cancel to watch ID %d: %v", watchID, err)
+		logger.Warn("failed to send cancel to watch", "watch_id", watchID, "error", err)
 	}
 }
 
@@ -277,15 +277,10 @@ func (w *watcher) CancelWatch(watchID int64, revision int64, reason error) {
 // to the watcher client. If all watches have progress notifications enabled,
 // instead of sending multiple messages, it sends a broadcast message.
 // Note that this function is also used for on-demand progress requests.
-func (w *watcher) ReportProgressOnInterval(DbLatestRevision func() (int64, error)) func(ctx context.Context) (bool, error) {
+func (w *watcher) ReportProgressOnInterval(committedRevision func() int64, logger *slog.Logger) func(ctx context.Context) (bool, error) {
 	return func(ctx context.Context) (bool, error) {
-		// get latest revision from local db
-		revision, err := DbLatestRevision()
-		if err != nil {
-			fmt.Printf("Failed to get latest revision for ReportProgressOnInterval: %v", err)
-			// always return condition=false, err=nil
-			return false, nil
-		}
+		// get committed revision
+		revision := committedRevision()
 
 		// create array of watchIDs to send to
 		progressWatchIDs := make([]int64, 0)

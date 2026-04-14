@@ -1,4 +1,4 @@
-// Copyright 2025 Nadrama Pty Ltd
+// Copyright 2026 Nadrama Pty Ltd
 // SPDX-License-Identifier: Apache-2.0
 
 package clientapi
@@ -43,15 +43,16 @@ func (cs *ClientAPIServer) Txn(ctx context.Context, r *pb.TxnRequest) (resp *pb.
 	} else if inserted != nil {
 		cs.logger.Debug("txn updated", "key", string(inserted.Key), "rev", inserted.Revision)
 	}
-	// Replicate to watchers
-	var prevRecord *proto.Record
-	if inserted != nil && !inserted.Created && inserted.PrevRevision > 0 {
-		prevRecord, err = cs.db.FindRecordByRev(inserted.PrevRevision)
-		if err != nil {
-			cs.logger.Debug("find prev", "key", string(inserted.Key), "rev", inserted.Revision, "prev", inserted.PrevRevision, "err", err.Error())
-		}
-	}
+	// Replicate to watchers — the record is already in memory
+	// and committed_revision has been advanced by LeaderTxn.
 	if inserted != nil {
+		var prevRecord *proto.Record
+		if !inserted.Created && inserted.PrevRevision > 0 {
+			prevRecord, err = cs.db.FindRecordByRev(inserted.PrevRevision)
+			if err != nil {
+				cs.logger.Debug("find prev", "key", string(inserted.Key), "rev", inserted.Revision, "prev", inserted.PrevRevision, "err", err.Error())
+			}
+		}
 		cs.Distribute(inserted, prevRecord)
 	}
 	return resp, nil

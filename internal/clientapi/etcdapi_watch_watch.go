@@ -1,17 +1,16 @@
-// Copyright 2025 Nadrama Pty Ltd
+// Copyright 2026 Nadrama Pty Ltd
 // SPDX-License-Identifier: Apache-2.0
 
 package clientapi
 
-// glossory
-// watcher - watchers represents a single gRPC bidrectional stream client
+// glossary
+// watcher - watchers represents a single gRPC bidirectional stream client
 //           e.g. kube-apiserver
 // watch   - watches range on/track specific events. multiple per watcher.
 //           e.g. multiple `kubectl watch` commands connected to a
 //                single kube-apiserver watcher.
 
 import (
-	"fmt"
 	"sync/atomic"
 	"time"
 
@@ -63,16 +62,15 @@ func (cs *ClientAPIServer) Watch(ws pb.Watch_WatchServer) error {
 			// end goroutine once channel is closed
 			// this will happen if Cleanup is invoked (at end of Watch method)
 			if !ok {
-				fmt.Printf("Watch() inboxCh closed\n")
+				cs.logger.Debug("watch inbox channel closed", "watcher_id", watcherID)
 				return
 			}
 
 			// send message back to client
 			// note that because this should be the only goroutine sending
 			// messages to the client, we don't need to lock the watcher
-			err := w.client.Send(&msg)
-			if err != nil {
-				fmt.Printf("Watch() Send() error: %v\n", err)
+			if err := w.client.Send(&msg); err != nil {
+				cs.logger.Debug("watch send failed", "watcher_id", watcherID, "error", err)
 				return
 			}
 		}
@@ -85,7 +83,7 @@ func (cs *ClientAPIServer) Watch(ws pb.Watch_WatchServer) error {
 		// TODO: add jitter so we don't send updates to all watchers at the same time
 		time.Second*5,
 		true,
-		w.ReportProgressOnInterval(cs.db.LatestRevision),
+		w.ReportProgressOnInterval(cs.state.Committed, cs.logger),
 	)
 
 	// block until gRPC stream is closed
@@ -95,27 +93,25 @@ func (cs *ClientAPIServer) Watch(ws pb.Watch_WatchServer) error {
 		var msg *pb.WatchRequest
 		msg, err = w.client.Recv()
 		if err != nil {
-			fmt.Printf("Watch() cancelled or returning error\n")
+			cs.logger.Debug("watch stream closed", "watcher_id", watcherID)
 			// end watch/exit loop when the stream has an error/is closed
 			break
 		}
 		if cr := msg.GetCreateRequest(); cr != nil {
 			// handle watch create request
-			latestRevision, _ := cs.db.LatestRevision()
-			w.CreateWatch(cr, latestRevision, cs.db.GetRevision)
+			w.CreateWatch(cr, cs.state.Committed(), cs.db.GetRevision, cs.logger)
 		}
 		if cr := msg.GetCancelRequest(); cr != nil {
 			// handle watch cancel request
-			revision, _ := cs.db.LatestRevision()
-			w.CancelWatch(cr.WatchId, revision, nil)
+			w.CancelWatch(cr.WatchId, cs.state.Committed(), nil, cs.logger)
 		}
 		if pr := msg.GetProgressRequest(); pr != nil {
 			// handle watch progress request
-			w.ReportProgressOnInterval(cs.db.LatestRevision)(w.client.Context())
+			w.ReportProgressOnInterval(cs.state.Committed, cs.logger)(w.client.Context())
 		}
 	}
 
 	// if above loop has exited, it means the stream is closed, so cleanup
-	w.Cleanup(watcherID)
+	w.Cleanup(watcherID, cs.logger)
 	return err
 }

@@ -128,3 +128,25 @@ func TestPrimaryTransitions(t *testing.T) {
 		})
 	}
 }
+
+func TestCommittedRevision(t *testing.T) {
+	s := newTestState()
+	if s.Committed() != 0 {
+		t.Fatalf("expected initial committed 0, got %d", s.Committed())
+	}
+	s.SetCommitted(42)
+	if s.Committed() != 42 {
+		t.Fatalf("expected committed 42, got %d", s.Committed())
+	}
+}
+
+func TestCompactionRevision(t *testing.T) {
+	s := newTestState()
+	if s.Compaction() != 0 {
+		t.Fatalf("expected initial compaction 0, got %d", s.Compaction())
+	}
+	s.SetCompaction(10)
+	if s.Compaction() != 10 {
+		t.Fatalf("expected compaction 10, got %d", s.Compaction())
+	}
+}

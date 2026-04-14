@@ -19,6 +19,12 @@ import (
 	"github.com/nadrama-com/netsy/internal/proto"
 )
 
+// PrimaryChangeFunc is called when this node's Primary role changes as
+// a result of a cluster state update. isPrimary is true when this node
+// has been elected Primary, and false when it has transitioned back
+// to Replica.
+type PrimaryChangeFunc func(isPrimary bool)
+
 // Manager owns the outbound gRPC connections to the current Elector and
 // Primary. It updates connections when the cluster state changes.
 type Manager struct {
@@ -26,6 +32,8 @@ type Manager struct {
 	nodeID    string
 	tlsConfig *tls.Config
 	state     *nodestate.State
+
+	onPrimaryChange PrimaryChangeFunc
 
 	mu          sync.Mutex
 	electorAddr string
@@ -49,14 +57,23 @@ func NewManager(
 	}
 }
 
+// SetPrimaryChangeFunc sets a callback invoked when this node's Primary
+// role changes. Must be called before any cluster state updates.
+func (m *Manager) SetPrimaryChangeFunc(fn PrimaryChangeFunc) {
+	m.onPrimaryChange = fn
+}
+
 // ApplyClusterState updates local node state and outbound peer
 // connections to reflect the given cluster state.
 func (m *Manager) ApplyClusterState(ctx context.Context, cs nodestate.ClusterState) {
 	old := m.state.ClusterState()
 	m.state.SetClusterState(cs)
 
+	wasPrimary := old.Primary.NodeID == m.nodeID
+	isPrimary := cs.Primary.NodeID == m.nodeID
+
 	// If this node has been elected Primary, transition to Starting.
-	if cs.Primary.NodeID == m.nodeID && m.state.Primary() == nodestate.PrimaryReplica {
+	if isPrimary && m.state.Primary() == nodestate.PrimaryReplica {
 		if err := m.state.SetPrimary(nodestate.PrimaryStarting); err != nil {
 			m.logger.Error("failed to transition to primary starting", "error", err)
 		}
@@ -64,10 +81,16 @@ func (m *Manager) ApplyClusterState(ctx context.Context, cs nodestate.ClusterSta
 
 	// If this node was elected Primary (Starting) but a different node
 	// has since been elected, transition back to Replica.
-	if cs.Primary.NodeID != m.nodeID && m.state.Primary() == nodestate.PrimaryStarting {
+	if !isPrimary && m.state.Primary() == nodestate.PrimaryStarting {
 		if err := m.state.SetPrimary(nodestate.PrimaryReplica); err != nil {
 			m.logger.Error("failed to transition from starting back to replica", "error", err)
 		}
+	}
+
+	// Notify role change listeners when the Primary role changes for
+	// this node (e.g. to start/stop the replication follower).
+	if m.onPrimaryChange != nil && wasPrimary != isPrimary {
+		m.onPrimaryChange(isPrimary)
 	}
 
 	// Update Elector connection if changed.

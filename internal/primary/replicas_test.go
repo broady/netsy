@@ -88,6 +88,43 @@ func TestReplicasReset(t *testing.T) {
 	}
 }
 
+func TestReplicasUpdateReceipt(t *testing.T) {
+	m := NewReplicas()
+	m.Add("node-a")
+
+	before := time.Now().UnixNano()
+	ok := m.UpdateReceipt("node-a", nodestate.HealthHealthy, nodestate.PrimaryReplica, 99)
+	after := time.Now().UnixNano()
+
+	if !ok {
+		t.Fatal("expected update to succeed")
+	}
+
+	entry, _ := m.Get("node-a")
+	if entry.Health() != nodestate.HealthHealthy {
+		t.Fatalf("expected healthy, got %s", entry.Health())
+	}
+	if entry.LatestRevision.Load() != 99 {
+		t.Fatalf("expected revision 99, got %d", entry.LatestRevision.Load())
+	}
+	lastReceipt := entry.LastReceipt.Load()
+	if lastReceipt < before || lastReceipt > after {
+		t.Fatalf("LastReceipt %d not in expected range [%d, %d]", lastReceipt, before, after)
+	}
+	if entry.ReceiptCount.Load() != 1 {
+		t.Fatalf("expected ReceiptCount 1, got %d", entry.ReceiptCount.Load())
+	}
+}
+
+func TestReplicasUpdateReceiptNotFound(t *testing.T) {
+	m := NewReplicas()
+
+	ok := m.UpdateReceipt("node-x", nodestate.HealthHealthy, nodestate.PrimaryReplica, 1)
+	if ok {
+		t.Fatal("expected update to fail for unknown node")
+	}
+}
+
 func TestReplicasHeartbeatTimestamp(t *testing.T) {
 	m := NewReplicas()
 	entry := m.Add("node-a")

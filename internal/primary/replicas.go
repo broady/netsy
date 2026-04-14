@@ -167,6 +167,28 @@ func (m *Replicas) UpdateHeartbeat(nodeID string, health nodestate.HealthState, 
 	return true
 }
 
+// UpdateReceipt updates a Replica's heartbeat timestamp, state, and
+// receipt tracking atomically. Called when a Receipt is received from a
+// Replica via the Follow replication stream. It returns false if the
+// Replica is not in the map.
+func (m *Replicas) UpdateReceipt(nodeID string, health nodestate.HealthState, primary nodestate.PrimaryState, latestRevision int64) bool {
+	m.mu.RLock()
+	e, ok := m.replicas[nodeID]
+	m.mu.RUnlock()
+	if !ok {
+		return false
+	}
+
+	now := time.Now().UnixNano()
+	e.LastHeartbeat.Store(now)
+	e.SetHealth(health)
+	e.SetPrimary(primary)
+	e.LatestRevision.Store(latestRevision)
+	e.LastReceipt.Store(now)
+	e.ReceiptCount.Add(1)
+	return true
+}
+
 // Reset clears all Replica entries. Called when this node loses Primary
 // leadership.
 func (m *Replicas) Reset() {

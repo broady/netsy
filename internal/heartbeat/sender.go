@@ -138,7 +138,7 @@ func (s *Sender) sendToElector(ctx context.Context) {
 		return
 	}
 
-	ns := s.buildNodeState()
+	ns := s.BuildNodeState()
 
 	sendCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
@@ -192,7 +192,7 @@ func (s *Sender) sendToPrimaryIfNeeded(ctx context.Context) {
 		}
 	}
 
-	ns := s.buildNodeState()
+	ns := s.BuildNodeState()
 
 	sendCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
@@ -202,7 +202,7 @@ func (s *Sender) sendToPrimaryIfNeeded(ctx context.Context) {
 	}
 }
 
-func (s *Sender) buildNodeState() *proto.NodeState {
+func (s *Sender) BuildNodeState() *proto.NodeState {
 	latestRevision, err := s.db.LatestRevision()
 	if err != nil {
 		s.logger.Warn("failed to get latest revision for heartbeat", "error", err)

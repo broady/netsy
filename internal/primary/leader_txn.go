@@ -69,77 +69,58 @@ func (ps *Server) LeaderTxn(ctx context.Context, r *pb.TxnRequest) (record *prot
 	record.LeaderId = ps.config.NodeID
 	// Assign the next revision ID
 	record.Revision = ps.nextRevisionID.Load()
-	// Start transaction for synchronous object storage mode or use auto-commit
-	if *ps.config.Replication.Quorum == 0 {
-		// Use transaction for synchronous object storage replication
-		tx, err := ps.db.BeginTx()
-		if err != nil {
-			return nil, nil, fmt.Errorf("failed to begin transaction: %w", err)
+	// TODO: All writes use Path 1 (synchronous object storage) until Phase 17
+	// implements quorum transactions. Log a warning if quorum is configured
+	// but not yet supported.
+	if *ps.config.Replication.Quorum != 0 {
+		ps.logger.Warn("quorum transactions not yet implemented, using synchronous object storage writes")
+	}
+	// Use transaction for synchronous object storage writes (Path 1)
+	tx, err := ps.db.BeginTx()
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to begin transaction: %w", err)
+	}
+	// Insert record within transaction
+	inserted, err = ps.db.InsertRecord(record, tx)
+	if err != nil &&
+		errors.Is(err, localdb.ErrCompareRevisionFailed) &&
+		len(r.Failure) == 1 {
+		tx.Rollback()
+		// Range on compare failure
+		ps.logger.Debug("record insert error - executing failure op (range)", "error", err)
+		err = nil
+		rangeResp, err = commonapi.Range(ps.db, ctx, &pb.RangeRequest{
+			Key: []byte(record.Key),
+		})
+		if rangeResp == nil {
+			return nil, nil, fmt.Errorf("error getting range response: %w", err)
 		}
-		// Insert record within transaction
-		inserted, err = ps.db.InsertRecord(record, tx)
-		if err != nil &&
-			errors.Is(err, localdb.ErrCompareRevisionFailed) &&
-			len(r.Failure) == 1 {
-			tx.Rollback()
-			// Range on compare failure
-			ps.logger.Debug("record insert error - executing failure op (range)", "error", err)
-			err = nil
-			rangeResp, err = commonapi.Range(ps.db, ctx, &pb.RangeRequest{
-				Key: []byte(record.Key),
-			})
-			if rangeResp == nil {
-				return nil, nil, fmt.Errorf("error getting range response: %w", err)
-			}
-			// Don't upload on compare failure, just handle the range response
-		} else if err != nil {
-			tx.Rollback()
-			return nil, nil, fmt.Errorf("error for %s: %w", record.Key, err)
-		} else {
-			// Upload to object storage within transaction boundary only on successful insert
-			err = ps.writeRecord(ctx, inserted)
-			if err != nil {
-				tx.Rollback()
-				return nil, nil, fmt.Errorf("object storage upload failed: %w", err)
-			}
-			// Commit transaction
-			err = tx.Commit()
-			if err != nil {
-				return nil, nil, fmt.Errorf("failed to commit transaction: %w", err)
-			}
-			// Increment revision counter only after successful commit
-			ps.nextRevisionID.Add(1)
-			// Calculate record size for snapshot tracking
-			recordSize := int64(googlepb.Size(inserted))
-			// Check if snapshot should be created
-			ps.checkAndCreateSnapshot(inserted.Revision, recordSize)
-		}
+		// Don't upload on compare failure, just handle the range response
+	} else if err != nil {
+		tx.Rollback()
+		return nil, nil, fmt.Errorf("error for %s: %w", record.Key, err)
 	} else {
-		// Insert directly for non-synchronous replication modes
-		inserted, err = ps.db.InsertRecord(record, nil)
-		if err != nil &&
-			errors.Is(err, localdb.ErrCompareRevisionFailed) &&
-			len(r.Failure) == 1 {
-			// Range on compare failure
-			ps.logger.Debug("record insert error - executing failure op (range)", "error", err)
-			err = nil
-			rangeResp, err = commonapi.Range(ps.db, ctx, &pb.RangeRequest{
-				Key: []byte(record.Key),
-			})
-			if rangeResp == nil {
-				return nil, nil, fmt.Errorf("error getting range response: %w", err)
-			}
-		} else if inserted != nil {
-			// Increment revision counter only after successful insert
-			ps.nextRevisionID.Add(1)
-			// Calculate record size for snapshot tracking
-			recordSize := int64(googlepb.Size(inserted))
-			// Check if snapshot should be created
-			ps.checkAndCreateSnapshot(inserted.Revision, recordSize)
-		}
+		// Upload to object storage within transaction boundary only on successful insert
+		err = ps.writeRecord(ctx, inserted)
 		if err != nil {
-			return nil, nil, fmt.Errorf("error for %s: %w", record.Key, err)
+			tx.Rollback()
+			return nil, nil, fmt.Errorf("object storage upload failed: %w", err)
 		}
+		// Commit transaction
+		err = tx.Commit()
+		if err != nil {
+			return nil, nil, fmt.Errorf("failed to commit transaction: %w", err)
+		}
+		// Increment revision counter only after successful commit
+		ps.nextRevisionID.Add(1)
+		// Advance committed revision and broadcast to replicas
+		ps.BroadcastRecord(inserted)
+		ps.state.SetCommitted(inserted.Revision)
+		ps.BroadcastCommit(inserted.Revision)
+		// Calculate record size for snapshot tracking
+		recordSize := int64(googlepb.Size(inserted))
+		// Check if snapshot should be created
+		ps.checkAndCreateSnapshot(inserted.Revision, recordSize)
 	}
 	resp, err := BuildTxnResponse(inserted, rangeResp)
 	if err != nil {

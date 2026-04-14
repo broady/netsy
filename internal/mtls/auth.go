@@ -4,10 +4,14 @@
 package mtls
 
 import (
+	"context"
 	"crypto/tls"
 	"crypto/x509"
 	"fmt"
 	"net"
+
+	"google.golang.org/grpc/credentials"
+	"google.golang.org/grpc/peer"
 
 	"github.com/nadrama-com/netsy/internal/config"
 )
@@ -185,4 +189,27 @@ func certRole(cert *x509.Certificate) (Role, error) {
 	default:
 		return "", fmt.Errorf("certificate organizational unit must be %q or %q, got %q", RolePeer, RoleClient, cert.Subject.OrganizationalUnit[0])
 	}
+}
+
+// PeerNodeID extracts the peer's node ID (CN field) from the gRPC context's TLS peer certificates.
+func PeerNodeID(ctx context.Context) (string, error) {
+	p, ok := peer.FromContext(ctx)
+	if !ok {
+		return "", fmt.Errorf("no peer info in context")
+	}
+	if p.AuthInfo == nil {
+		return "", fmt.Errorf("no auth info in peer")
+	}
+	tlsInfo, ok := p.AuthInfo.(credentials.TLSInfo)
+	if !ok {
+		return "", fmt.Errorf("peer auth info is not TLS")
+	}
+	if len(tlsInfo.State.PeerCertificates) == 0 {
+		return "", fmt.Errorf("no peer certificates")
+	}
+	cn := tlsInfo.State.PeerCertificates[0].Subject.CommonName
+	if cn == "" {
+		return "", fmt.Errorf("peer certificate common name is empty")
+	}
+	return cn, nil
 }

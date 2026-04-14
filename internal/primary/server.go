@@ -34,7 +34,12 @@ type Server struct {
 	storageClient  storage.ObjectStorage
 	snapshotWorker *snapshot.Worker
 	state          *nodestate.State
-	replicas       *Replicas
+	replicas     *Replicas
+	followMu     sync.RWMutex
+	followStreams map[string]*followSession
+
+	svcMu     sync.Mutex
+	svcCancel context.CancelFunc
 
 	heartbeatInterval time.Duration
 	degradationCount  int
@@ -68,6 +73,7 @@ func NewServer(
 		snapshotWorker:    snapshotWorker,
 		state:             state,
 		replicas:          NewReplicas(),
+		followStreams:     make(map[string]*followSession),
 		heartbeatInterval: heartbeatInterval,
 		degradationCount:  degradationCount,
 	}
@@ -77,6 +83,40 @@ func NewServer(
 	}
 
 	return s, nil
+}
+
+// StartServices starts Primary background services (degradation loop).
+// It is a no-op if services are already running.
+func (s *Server) StartServices(parent context.Context) {
+	s.svcMu.Lock()
+	defer s.svcMu.Unlock()
+
+	if s.svcCancel != nil {
+		return
+	}
+
+	ctx, cancel := context.WithCancel(parent)
+	s.svcCancel = cancel
+
+	go s.RunDegradationLoop(ctx)
+	s.logger.Info("primary services started")
+}
+
+// StopServices stops Primary background services and resets the follow
+// hub and replica tracker. It is a no-op if services are not running.
+func (s *Server) StopServices() {
+	s.svcMu.Lock()
+	defer s.svcMu.Unlock()
+
+	if s.svcCancel == nil {
+		return
+	}
+
+	s.svcCancel()
+	s.svcCancel = nil
+	s.resetFollowStreams()
+	s.replicas.Reset()
+	s.logger.Info("primary services stopped")
 }
 
 // Replicas returns the server's Replica tracker.
