@@ -4,12 +4,33 @@
 package datastore
 
 import (
+	"bufio"
+	"bytes"
 	"context"
 	"fmt"
 	"sort"
 
+	"github.com/nadrama-com/netsy/internal/datafile"
+	pb "github.com/nadrama-com/netsy/internal/proto"
 	"github.com/nadrama-com/netsy/internal/storage"
 )
+
+// MarshalChunk serialises a single record into the chunk datafile format,
+// returning the object-storage key and the raw bytes.
+func MarshalChunk(record *pb.Record, nodeID string) (key string, data []byte, err error) {
+	var buf bytes.Buffer
+	w, err := datafile.NewWriter(bufio.NewWriter(&buf), pb.FileKind_KIND_CHUNK, 1, nodeID)
+	if err != nil {
+		return "", nil, fmt.Errorf("create datafile writer: %w", err)
+	}
+	if err := w.Write(record); err != nil {
+		return "", nil, fmt.Errorf("write record: %w", err)
+	}
+	if err := w.Close(); err != nil {
+		return "", nil, fmt.Errorf("close datafile writer: %w", err)
+	}
+	return ChunkKey(record.Revision), buf.Bytes(), nil
+}
 
 // ChunkKey generates the object storage key for a chunk file
 func ChunkKey(revision int64) string {

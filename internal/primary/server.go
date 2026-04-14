@@ -5,6 +5,7 @@ package primary
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"sync"
 	"sync/atomic"
@@ -34,12 +35,16 @@ type Server struct {
 	storageClient  storage.ObjectStorage
 	snapshotWorker *snapshot.Worker
 	state          *nodestate.State
-	replicas     *Replicas
-	followMu     sync.RWMutex
-	followStreams map[string]*followSession
+	replicas       *Replicas
+	followMu       sync.RWMutex
+	followStreams  map[string]*followSession
 
 	svcMu     sync.Mutex
 	svcCancel context.CancelFunc
+
+	preflightMu     sync.Mutex
+	preflightCancel context.CancelFunc
+	preflightID     uint64
 
 	heartbeatInterval time.Duration
 	degradationCount  int
@@ -85,8 +90,9 @@ func NewServer(
 	return s, nil
 }
 
-// StartServices starts Primary background services (degradation loop).
-// It is a no-op if services are already running.
+// StartServices starts Primary background services and, when the node is in
+// the Starting state, begins the preflight loop that must complete before the
+// Primary becomes Active. It is a no-op if services are already running.
 func (s *Server) StartServices(parent context.Context) {
 	s.svcMu.Lock()
 	defer s.svcMu.Unlock()
@@ -99,6 +105,7 @@ func (s *Server) StartServices(parent context.Context) {
 	s.svcCancel = cancel
 
 	go s.RunDegradationLoop(ctx)
+	s.startPreflightLocked(ctx)
 	s.logger.Info("primary services started")
 }
 
@@ -107,6 +114,8 @@ func (s *Server) StartServices(parent context.Context) {
 func (s *Server) StopServices() {
 	s.svcMu.Lock()
 	defer s.svcMu.Unlock()
+
+	s.stopPreflight()
 
 	if s.svcCancel == nil {
 		return
@@ -169,9 +178,27 @@ func (s *Server) requirePrimary() error {
 	}
 }
 
+// requireActivePrimary returns a gRPC error if this node is not the active
+// Primary that can accept client write traffic.
+func (s *Server) requireActivePrimary() error {
+	if s.state.Primary() != nodestate.PrimaryActive {
+		return status.Errorf(codes.FailedPrecondition, "this node is not accepting writes (state: %s)", s.state.Primary())
+	}
+
+	return nil
+}
+
 // degradationCheckInterval is how often the degradation loop checks for
 // Replicas that have missed heartbeats.
 const degradationCheckInterval = 100 * time.Millisecond
+
+// preflightRetryDelay is the wait between Primary preflight retries while the
+// node remains elected and in the Starting state.
+const preflightRetryDelay = time.Second
+
+// errPreflightStopped reports that Primary preflight should stop because the
+// node lost the Starting state or its context was cancelled.
+var errPreflightStopped = errors.New("primary preflight stopped")
 
 // RunDegradationLoop periodically checks all Replicas and marks any as
 // Degraded if they have missed the configured number of consecutive
@@ -220,4 +247,3 @@ func (s *Server) checkDegradation() {
 		entry.SetHealth(nodestate.HealthDegraded)
 	}
 }
-

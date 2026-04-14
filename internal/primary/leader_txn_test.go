@@ -4,13 +4,35 @@
 package primary
 
 import (
+	"context"
+	"log/slog"
 	"strings"
 	"testing"
 
+	"github.com/nadrama-com/netsy/internal/nodestate"
 	"github.com/nadrama-com/netsy/internal/proto"
 	pb "go.etcd.io/etcd/api/v3/etcdserverpb"
 	"go.etcd.io/etcd/api/v3/mvccpb"
 )
+
+// TestLeaderTxnRequiresActivePrimary verifies that client writes are rejected
+// while the Primary is still in the Starting state.
+func TestLeaderTxnRequiresActivePrimary(t *testing.T) {
+	state := nodestate.New(slog.Default())
+	srv := newTestServer(t, state, 100, 2)
+
+	if err := state.SetPrimary(nodestate.PrimaryStarting); err != nil {
+		t.Fatalf("SetPrimary(Starting) error = %v", err)
+	}
+
+	_, _, err := srv.LeaderTxn(context.Background(), &pb.TxnRequest{})
+	if err == nil {
+		t.Fatal("LeaderTxn() error = nil, want write admission failure")
+	}
+	if !strings.Contains(err.Error(), "not accepting writes") {
+		t.Fatalf("LeaderTxn() error = %v, want write admission failure", err)
+	}
+}
 
 func TestParseTxnRequest(t *testing.T) {
 	tests := []struct {

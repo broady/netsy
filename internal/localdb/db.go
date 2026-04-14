@@ -31,6 +31,7 @@ type Database interface {
 	FindRecordsBy(whereQuery string, whereArgs []any, revision int64, limit int64, order string) ([]*proto.Record, int64, int64, error)
 	FindRecordByRev(revision int64) (*proto.Record, error)
 	FindAllRecordsForSnapshot(upToRevision int64) ([]*proto.Record, error)
+	FindRecordsAfterRevision(revision int64) ([]*proto.Record, error)
 	InsertRecord(record *proto.Record, tx *Tx) (*proto.Record, error)
 	BeginTx() (*Tx, error)
 	ReplicateRecord(record *proto.Record) (*proto.Record, error)

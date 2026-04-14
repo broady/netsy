@@ -4,55 +4,72 @@
 package primary
 
 import (
-	"bufio"
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 
-	"github.com/nadrama-com/netsy/internal/datafile"
 	"github.com/nadrama-com/netsy/internal/datastore"
 	pb "github.com/nadrama-com/netsy/internal/proto"
+	"github.com/nadrama-com/netsy/internal/storage"
 )
 
-// writeRecord writes a single record to object storage as a chunk file
+// errChunkAlreadyExists reports that a strict create-only chunk write found an
+// existing object at the target revision key.
+var errChunkAlreadyExists = errors.New("chunk already exists")
+
+// writeRecord writes a single record to object storage as a chunk file.
 func (ps *Server) writeRecord(ctx context.Context, record *pb.Record) error {
-	buffer := &bytes.Buffer{}
-	bufWriter := bufio.NewWriter(buffer)
-
-	// Create datafile writer for a single record chunk
-	// Use the instance ID from config as the leader ID
-	leaderID := ps.config.NodeID
-	writer, err := datafile.NewWriter(bufWriter, pb.FileKind_KIND_CHUNK, 1, leaderID)
+	key, data, err := datastore.MarshalChunk(record, ps.config.NodeID)
 	if err != nil {
-		return fmt.Errorf("failed to create datafile writer: %w", err)
+		return err
 	}
 
-	err = writer.Write(record)
-	if err != nil {
-		return fmt.Errorf("failed to write record: %w", err)
-	}
-
-	err = writer.Close()
-	if err != nil {
-		return fmt.Errorf("failed to close datafile writer: %w", err)
-	}
-
-	// Generate object storage key for the chunk file
-	key := datastore.ChunkKey(record.Revision)
-	data := buffer.Bytes()
-
-	// Upload with retry-once logic
 	err = ps.storageClient.PutIfMatch(ctx, key, data, "")
 	if err != nil {
 		ps.logger.Debug("first upload attempt failed, retrying once", "error", err, "key", key)
-		// Retry once on failure
 		err = ps.storageClient.PutIfMatch(ctx, key, data, "")
 		if err != nil {
+			if errors.Is(err, storage.ErrPrecondition) {
+				return fmt.Errorf("%w: %s: %w", errChunkAlreadyExists, key, err)
+			}
 			return fmt.Errorf("object storage upload failed after retry: %w", err)
 		}
 		ps.logger.Info("object storage upload succeeded on retry", "key", key)
 	}
 
 	ps.logger.Debug("record written to object storage", "revision", record.Revision, "key", key)
+	return nil
+}
+
+// writeRecordIfMissing ensures a record's chunk file exists in object storage,
+// tolerating an already-present identical file from an earlier retry.
+func (ps *Server) writeRecordIfMissing(ctx context.Context, record *pb.Record) error {
+	err := ps.writeRecord(ctx, record)
+	if err == nil {
+		return nil
+	}
+	if !errors.Is(err, errChunkAlreadyExists) {
+		return err
+	}
+
+	// Chunk already exists. Verify it matches what we would have written.
+	key, data, marshalErr := datastore.MarshalChunk(record, ps.config.NodeID)
+	if marshalErr != nil {
+		return marshalErr
+	}
+
+	existing, _, getErr := ps.storageClient.Get(ctx, key)
+	if getErr != nil {
+		return fmt.Errorf("read existing chunk %s after already-exists: %w", key, getErr)
+	}
+	if !bytes.Equal(existing, data) {
+		return fmt.Errorf("chunk %s already exists with different contents", key)
+	}
+
+	ps.logger.Debug("record already durable in object storage during primary preflight",
+		"revision", record.Revision,
+		"key", key,
+	)
 	return nil
 }

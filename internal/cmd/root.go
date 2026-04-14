@@ -391,8 +391,6 @@ func NewRootCmd() *cobra.Command {
 		// Bootstrap may already have established that this node is the current
 		// Primary, so start Primary services immediately in that case.
 		if state.ClusterState().Primary.NodeID == c.NodeID {
-			// TODO: Replace this direct service start with Phase 15 Primary
-			// preflight (Starting -> preflight -> Active) before activation.
 			primarySrv.StartServices(ctx)
 		}
 

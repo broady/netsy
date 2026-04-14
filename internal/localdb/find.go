@@ -235,6 +235,19 @@ func (db *database) FindAllRecordsForSnapshot(upToRevision int64) ([]*proto.Reco
 	return records, nil
 }
 
+// FindRecordsAfterRevision returns every record with a revision greater than
+// the provided revision, ordered ascending by revision.
+func (db *database) FindRecordsAfterRevision(revision int64) ([]*proto.Record, error) {
+	queryEnd := "WHERE revision > ? ORDER BY revision ASC"
+
+	records, err := db.selectRecord(queryEnd, false, false, revision)
+	if err != nil {
+		return nil, err
+	}
+
+	return records, nil
+}
+
 func (db *database) FindRecordByRev(rev int64) (record *proto.Record, err error) {
 	query := "SELECT " +
 		"revision, " +

@@ -55,6 +55,9 @@ var ErrUnsupported = errors.New("Unsupported request - netsy only implementes th
 func (ps *Server) LeaderTxn(ctx context.Context, r *pb.TxnRequest) (record *proto.Record, parsed *pb.TxnResponse, err error) {
 	var rangeResp *pb.RangeResponse
 	var inserted *proto.Record
+	if err := ps.requireActivePrimary(); err != nil {
+		return nil, nil, err
+	}
 	// Serialize all leader transaction processing
 	ps.leaderTxnMutex.Lock()
 	defer ps.leaderTxnMutex.Unlock()
