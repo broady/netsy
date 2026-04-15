@@ -11,9 +11,9 @@ package clientapi
 //                single kube-apiserver watcher.
 
 import (
-	"sync/atomic"
 	"time"
 
+	"github.com/nadrama-com/netsy/internal/watch"
 	pb "go.etcd.io/etcd/api/v3/etcdserverpb"
 	"k8s.io/apimachinery/pkg/util/wait"
 )
@@ -34,30 +34,15 @@ import (
 // the watcher. The inbox channel messages are expected to already be
 // a WatchResponse.
 func (cs *ClientAPIServer) Watch(ws pb.Watch_WatchServer) error {
-	// create a globally-unique watcher ID
-	watcherID := atomic.AddInt64(&watcherIDCounter, 1)
-
-	// instantiate a new watcher
-	w := &watcher{
-		id:       watcherID,
-		client:   ws,
-		inboxOk:  true,
-		inboxCh:  make(chan pb.WatchResponse), // TODO: use a buffered channel?
-		watches:  map[int64]watch{},
-		progress: map[int64]bool{},
-	}
-
-	// add watcher to map of all watchers
-	// obtain write lock, add to map, then release lock immediately
-	allWatchers.Lock()
-	allWatchers.servers[watcherID] = w
-	allWatchers.Unlock()
+	// create a new watcher and register it with the watch manager
+	w := watch.NewWatcher(ws)
+	watcherID := cs.watchManager.Register(w)
 
 	// start a goroutine to handle messages on the inbox channel
 	go func() {
 		for {
 			// block until next message is received
-			msg, ok := <-w.inboxCh
+			msg, ok := <-w.InboxCh()
 
 			// end goroutine once channel is closed
 			// this will happen if Cleanup is invoked (at end of Watch method)
@@ -69,7 +54,7 @@ func (cs *ClientAPIServer) Watch(ws pb.Watch_WatchServer) error {
 			// send message back to client
 			// note that because this should be the only goroutine sending
 			// messages to the client, we don't need to lock the watcher
-			if err := w.client.Send(&msg); err != nil {
+			if err := w.Client().Send(&msg); err != nil {
 				cs.logger.Debug("watch send failed", "watcher_id", watcherID, "error", err)
 				return
 			}
@@ -79,7 +64,7 @@ func (cs *ClientAPIServer) Watch(ws pb.Watch_WatchServer) error {
 	// we use PollUntilContextCancel to invoke progress reporting on an interval
 	// it will continue until the context is cancelled or hits a deadline.
 	go wait.PollUntilContextCancel(
-		w.client.Context(),
+		w.Client().Context(),
 		// TODO: add jitter so we don't send updates to all watchers at the same time
 		time.Second*5,
 		true,
@@ -91,7 +76,7 @@ func (cs *ClientAPIServer) Watch(ws pb.Watch_WatchServer) error {
 	for {
 		// wait for next message or error from gRPC stream
 		var msg *pb.WatchRequest
-		msg, err = w.client.Recv()
+		msg, err = w.Client().Recv()
 		if err != nil {
 			cs.logger.Debug("watch stream closed", "watcher_id", watcherID)
 			// end watch/exit loop when the stream has an error/is closed
@@ -107,11 +92,11 @@ func (cs *ClientAPIServer) Watch(ws pb.Watch_WatchServer) error {
 		}
 		if pr := msg.GetProgressRequest(); pr != nil {
 			// handle watch progress request
-			w.ReportProgressOnInterval(cs.state.Committed, cs.logger)(w.client.Context())
+			w.ReportProgressOnInterval(cs.state.Committed, cs.logger)(w.Client().Context())
 		}
 	}
 
 	// if above loop has exited, it means the stream is closed, so cleanup
-	w.Cleanup(watcherID, cs.logger)
+	w.Cleanup(cs.watchManager, cs.logger)
 	return err
 }

@@ -1,7 +1,7 @@
 // Copyright 2026 Nadrama Pty Ltd
 // SPDX-License-Identifier: Apache-2.0
 
-package clientapi
+package watch
 
 // glossary
 // watcher - watchers represents a single gRPC bidirectional stream client
@@ -21,36 +21,17 @@ import (
 
 	"github.com/nadrama-com/netsy/internal/proto"
 	pb "go.etcd.io/etcd/api/v3/etcdserverpb"
-	"go.etcd.io/etcd/api/v3/mvccpb"
 	clientv3 "go.etcd.io/etcd/client/v3"
 )
 
-//
-// watcher
-//
-
-// watchers is a map of watcher IDs to watcher structs.
-// it also has a RWMutex because we need to lock the map,
-// as new watchers are created on separate goroutines,
-// and then cleanup happens when each of those goroutines ends.
-// watcher is used by the dispatcher as well as Watch handler.
-// the dispatcher only requires a read lock,
-// everything else requires a write lock.
-type watchers struct {
-	sync.RWMutex
-	servers map[int64]*watcher
-}
-
-// we track all watchers in a global
-var allWatchers = watchers{
-	servers: map[int64]*watcher{},
-}
-
-// watcherIDCounter is a global counter for watcher IDs
-// atomic.AddInt64 is used to increment it while a lock is held
+// watcherIDCounter is a global counter for watcher IDs.
 var watcherIDCounter int64
 
-// watcher is a watch server that handles requests from a single client,
+// watchIDCounter is a global counter for watch IDs.
+// We do not support client-supplied watch IDs.
+var watchIDCounter int64
+
+// Watcher is a watch server that handles requests from a single client,
 // where each client may have one or more 'watch(es)' and each 'watch' may have
 // progress notifications enabled.
 // client is a gRPC bidirectional stream
@@ -58,21 +39,62 @@ var watcherIDCounter int64
 // data flow (where brackets represent other components):
 // (kubeapi-server) > client.Recv > Get[Create|Cancel|Progress]Request > (api)
 // (netsy Leader) > inboxCh > client.Send > (kube-apiserver) [> watcher client]
-type watcher struct {
+type Watcher struct {
 	id int64
 	sync.RWMutex
 	client   pb.Watch_WatchServer // the gRPC stream
 	inboxOk  bool
 	inboxCh  chan pb.WatchResponse
-	watches  map[int64]watch
+	watches  map[int64]watchEntry
 	progress map[int64]bool
 }
 
-// Cleanup is used to cleanup a watcher.
-// It closes/cancels any watches and related progress channels,
-// then removes itself from the watchers map.
-func (w *watcher) Cleanup(watcherID int64, logger *slog.Logger) {
-	logger.Debug("watcher cleanup", "watcher_id", watcherID)
+// watchEntry holds information from a CreateWatchRequest, plus a
+// context cancellation function.
+type watchEntry struct {
+	key             []byte
+	rangeEnd        []byte
+	startRevision   int64
+	prevKv          bool
+	progressNotify  bool
+	filtersNoPut    bool
+	filtersNoDelete bool
+	cancel          func()
+}
+
+// NewWatcher creates a new Watcher with a globally-unique ID for the
+// given gRPC watch stream.
+func NewWatcher(ws pb.Watch_WatchServer) *Watcher {
+	return &Watcher{
+		id:       atomic.AddInt64(&watcherIDCounter, 1),
+		client:   ws,
+		inboxOk:  true,
+		inboxCh:  make(chan pb.WatchResponse), // TODO: use a buffered channel?
+		watches:  map[int64]watchEntry{},
+		progress: map[int64]bool{},
+	}
+}
+
+// ID returns the watcher's unique identifier.
+func (w *Watcher) ID() int64 {
+	return w.id
+}
+
+// Client returns the watcher's gRPC stream.
+func (w *Watcher) Client() pb.Watch_WatchServer {
+	return w.client
+}
+
+// InboxCh returns the channel used to send WatchResponse messages to
+// the watcher's dispatch goroutine.
+func (w *Watcher) InboxCh() <-chan pb.WatchResponse {
+	return w.inboxCh
+}
+
+// Cleanup closes the watcher inbox channel, cancels all watches, and
+// removes itself from the manager.
+func (w *Watcher) Cleanup(m *Manager, logger *slog.Logger) {
+	logger.Debug("watcher cleanup", "watcher_id", w.id)
 
 	// obtain watcher write lock and release at end of the function
 	w.Lock()
@@ -91,37 +113,11 @@ func (w *watcher) Cleanup(watcherID int64, logger *slog.Logger) {
 		delete(w.progress, watchID)
 	}
 
-	// remove watcherID from all watchers map
-	// obtain write lock, remove, then release lock immediately
-	allWatchers.Lock()
-	delete(allWatchers.servers, watcherID)
-	allWatchers.Unlock()
+	m.Unregister(w.id)
 }
-
-//
-// watch
-//
-
-// watch holds information from a CreateWatchRequest, plus a
-// context cancellation function
-type watch struct {
-	key             []byte
-	rangeEnd        []byte
-	startRevision   int64
-	prevKv          bool
-	progressNotify  bool
-	filtersNoPut    bool
-	filtersNoDelete bool
-	cancel          func()
-}
-
-// watchIDCounter is a global counter for watch IDs
-// we do this because we do not support client-supplied watch IDs
-// atomic.AddInt64 is used to increment it while a lock is held
-var watchIDCounter int64
 
 // CreateWatch handles watch create requests.
-func (w *watcher) CreateWatch(r *pb.WatchCreateRequest, latestRevision int64, getRevision func(findRevision int64) (revision int64, compacted bool, compactedAt sql.NullString, err error), logger *slog.Logger) {
+func (w *Watcher) CreateWatch(r *pb.WatchCreateRequest, latestRevision int64, getRevision func(findRevision int64) (revision int64, compacted bool, compactedAt sql.NullString, err error), logger *slog.Logger) {
 	logger.Debug("create watch", "watcher_id", w.id)
 
 	respHeader := &pb.ResponseHeader{
@@ -195,7 +191,7 @@ func (w *watcher) CreateWatch(r *pb.WatchCreateRequest, latestRevision int64, ge
 	}
 
 	// prep watch
-	watchData := watch{
+	watchData := watchEntry{
 		key:            r.Key,
 		rangeEnd:       r.RangeEnd,
 		startRevision:  r.StartRevision,
@@ -212,7 +208,7 @@ func (w *watcher) CreateWatch(r *pb.WatchCreateRequest, latestRevision int64, ge
 		}
 	}
 
-	// add watchID to to the watcher
+	// add watchID to the watcher
 	// obtain write lock, add, then release lock immediately
 	w.Lock()
 	w.watches[watchID] = watchData
@@ -236,7 +232,7 @@ func (w *watcher) CreateWatch(r *pb.WatchCreateRequest, latestRevision int64, ge
 // Arguments:
 //   - revision: latest known revision to place in response header.
 //   - reason: if watch is being cancelled due to an unexpected error.
-func (w *watcher) CancelWatch(watchID int64, revision int64, reason error, logger *slog.Logger) {
+func (w *Watcher) CancelWatch(watchID int64, revision int64, reason error, logger *slog.Logger) {
 	logger.Debug("cancel watch", "watcher_id", w.id, "watch_id", watchID)
 
 	// remove watchID from watcher
@@ -277,7 +273,7 @@ func (w *watcher) CancelWatch(watchID int64, revision int64, reason error, logge
 // to the watcher client. If all watches have progress notifications enabled,
 // instead of sending multiple messages, it sends a broadcast message.
 // Note that this function is also used for on-demand progress requests.
-func (w *watcher) ReportProgressOnInterval(committedRevision func() int64, logger *slog.Logger) func(ctx context.Context) (bool, error) {
+func (w *Watcher) ReportProgressOnInterval(committedRevision func() int64, logger *slog.Logger) func(ctx context.Context) (bool, error) {
 	return func(ctx context.Context) (bool, error) {
 		// get committed revision
 		revision := committedRevision()
@@ -334,81 +330,8 @@ func (w *watcher) ReportProgressOnInterval(committedRevision func() int64, logge
 	}
 }
 
-// Distribute is a handler for distributing new Kv records to watchers
-// It's invoked from a separate go routine (i.e. in wsclient),
-// and lives here as it needs to obtain the read lock on allWatchers and
-// each of their watches, to check for matches and send on match.
-func (cs *ClientAPIServer) Distribute(record *proto.Record, prevRecord *proto.Record) {
-	if record == nil {
-		return
-	}
-
-	eventType := mvccpb.PUT
-	if record.Deleted {
-		eventType = mvccpb.DELETE
-	}
-
-	// note: WatchId is set in the watches loop (below), this is a msg template
-	msg := pb.WatchResponse{
-		Header: &pb.ResponseHeader{
-			Revision: record.Revision,
-		},
-		Events: []*mvccpb.Event{
-			{
-				Type: eventType,
-				Kv: &mvccpb.KeyValue{
-					Key:            record.Key,
-					CreateRevision: record.CreateRevision,
-					ModRevision:    record.Revision,
-					Version:        record.Version,
-					Value:          record.Value,
-					Lease:          record.Lease,
-				},
-			},
-		},
-	}
-
-	// note: this value will not be set if prevRecord has already
-	// been compacted. we also do not set on the msg struct
-	// directly as not all watches will request prev_kv=true.
-	var msgPrevKv *mvccpb.KeyValue
-	if prevRecord != nil {
-		msgPrevKv = &mvccpb.KeyValue{
-			Key:            prevRecord.Key,
-			CreateRevision: prevRecord.CreateRevision,
-			ModRevision:    prevRecord.Revision,
-			Version:        prevRecord.Version,
-			Value:          prevRecord.Value,
-			Lease:          prevRecord.Lease,
-		}
-	}
-
-	// obtain read lock on allWatchers
-	allWatchers.RLock()
-	defer allWatchers.RUnlock()
-
-	// loop over all watchers
-	for _, w := range allWatchers.servers {
-		// obtain lock for all watcher watches
-		w.RLock()
-		defer w.RUnlock()
-		// send to all watches that should receive the record
-		for watchID, watch := range w.watches {
-			if isWatchMatch(watch, record) {
-				msg.WatchId = watchID
-				if watch.prevKv {
-					msg.Events[0].PrevKv = msgPrevKv
-				} else {
-					msg.Events[0].PrevKv = nil
-				}
-				w.inboxCh <- msg
-			}
-		}
-	}
-}
-
-// isWatchMatch checks if a watch should be sent a record based on its filters properties
-func isWatchMatch(w watch, record *proto.Record) bool {
+// isWatchMatch checks if a watch should be sent a record based on its filters properties.
+func isWatchMatch(w watchEntry, record *proto.Record) bool {
 	// ignore put actions if 'noPut' filter is set
 	if w.filtersNoPut && !record.Deleted {
 		return false
@@ -433,7 +356,7 @@ func isWatchMatch(w watch, record *proto.Record) bool {
 	return false
 }
 
-// isInRange checks if a key is in the range e.g. of a watch
+// isInRange checks if a key is in the range e.g. of a watch.
 func isInRange(key []byte, rangeKey []byte, rangeEnd []byte) bool {
 	// determine case (similar to etcdapi_kv_range.go Range)
 	zeroByte := []byte{0}
@@ -475,9 +398,6 @@ func isInRange(key []byte, rangeKey []byte, rangeEnd []byte) bool {
 		// key_blob >= r.Key
 		// AND key_blob < r.RangeEnd
 		if bytes.Compare(key, rangeKey) >= 0 && bytes.Compare(key, rangeEnd) < 0 {
-			// key=abc, rangeKey=abd, compare=-1 ("key less than rangeKey")
-			// key=abc, rangeKey=abc, compare=0 ("key equal to rangeKey")
-			// key=abc, rangeKey=abb, compare=1 ("key greater than rangeKey")
 			return true
 		}
 	}

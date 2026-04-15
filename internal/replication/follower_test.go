@@ -12,22 +12,8 @@ import (
 	"github.com/nadrama-com/netsy/internal/localdb"
 	"github.com/nadrama-com/netsy/internal/nodestate"
 	"github.com/nadrama-com/netsy/internal/proto"
+	"github.com/nadrama-com/netsy/internal/watch"
 )
-
-type testWatchNotifier struct {
-	committed []int64
-}
-
-// EnqueueWatchRevision records buffered revisions for test coverage.
-func (n *testWatchNotifier) EnqueueWatchRevision(revision int64) {}
-
-// AdvanceCommittedRevision records committed revisions seen by the notifier.
-func (n *testWatchNotifier) AdvanceCommittedRevision(rev int64) {
-	n.committed = append(n.committed, rev)
-}
-
-// ResetPending is a no-op for follower tests.
-func (n *testWatchNotifier) ResetPending() {}
 
 // newTestFollowerDB creates a temporary SQLite database suitable for follower
 // tests that need real revision tracking.
@@ -70,9 +56,9 @@ func newTestFollower(t *testing.T) (*Follower, localdb.Database, *nodestate.Stat
 // TestHandleInitialDoesNotScheduleLagCheck verifies bootstrap Initial messages
 // restore committed state without arming replica lag degradation while loading.
 func TestHandleInitialDoesNotScheduleLagCheck(t *testing.T) {
-	follower, _, state := newTestFollower(t)
-	notifier := &testWatchNotifier{}
-	follower.watchNotifier = notifier
+	follower, db, state := newTestFollower(t)
+	wm := watch.NewManager(slog.Default(), db)
+	follower.watchManager = wm
 
 	if err := state.SetHealth(nodestate.HealthDegraded); err != nil {
 		t.Fatalf("SetHealth(Degraded) error = %v", err)
@@ -92,8 +78,5 @@ func TestHandleInitialDoesNotScheduleLagCheck(t *testing.T) {
 	}
 	if state.Committed() != 5 {
 		t.Fatalf("Committed() = %d, want 5", state.Committed())
-	}
-	if len(notifier.committed) != 1 || notifier.committed[0] != 5 {
-		t.Fatalf("watch notifier commits = %v, want [5]", notifier.committed)
 	}
 }

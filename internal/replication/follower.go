@@ -16,19 +16,12 @@ import (
 	"github.com/nadrama-com/netsy/internal/nodestate"
 	"github.com/nadrama-com/netsy/internal/peerclient"
 	"github.com/nadrama-com/netsy/internal/proto"
+	"github.com/nadrama-com/netsy/internal/watch"
 )
 
 // reconnectDelay is the wait time before retrying a Follow stream
 // connection after a failure.
 const reconnectDelay = time.Second
-
-// WatchNotifier is called when the Follower receives records or commit
-// messages that should be forwarded to the watch subsystem.
-type WatchNotifier interface {
-	EnqueueWatchRevision(revision int64)
-	AdvanceCommittedRevision(rev int64)
-	ResetPending()
-}
 
 // Follower connects to the Primary's Follow RPC as a Replica, receives
 // PrimaryMessages, persists records locally, and sends Receipts.
@@ -39,7 +32,7 @@ type Follower struct {
 	peers           *peerclient.Manager
 	db              localdb.Database
 	heartbeatSender *heartbeat.Sender
-	watchNotifier   WatchNotifier
+	watchManager    *watch.Manager
 
 	mu                  sync.Mutex
 	cancel              context.CancelFunc
@@ -59,7 +52,7 @@ func NewFollower(
 	peers *peerclient.Manager,
 	db localdb.Database,
 	heartbeatSender *heartbeat.Sender,
-	watchNotifier WatchNotifier,
+	watchManager *watch.Manager,
 ) *Follower {
 	return &Follower{
 		logger:          logger,
@@ -68,7 +61,7 @@ func NewFollower(
 		peers:           peers,
 		db:              db,
 		heartbeatSender: heartbeatSender,
-		watchNotifier:   watchNotifier,
+		watchManager:    watchManager,
 	}
 }
 
@@ -223,8 +216,8 @@ func (f *Follower) connectAndFollow(ctx context.Context, initialResult chan erro
 	// Discard any pending watch events from a previous stream since
 	// they are stale — the new Initial message will set the
 	// authoritative committed revision.
-	if f.watchNotifier != nil {
-		f.watchNotifier.ResetPending()
+	if f.watchManager != nil {
+		f.watchManager.ResetPending()
 	}
 
 	return f.processStream(stream, initialResult, initialPending)
@@ -310,8 +303,8 @@ func (f *Follower) handleInitial(initial *proto.Initial) error {
 		"compaction_revision", initial.GetCompactionRevision(),
 	)
 
-	if f.watchNotifier != nil {
-		f.watchNotifier.AdvanceCommittedRevision(initial.GetCommittedRevision())
+	if f.watchManager != nil {
+		f.watchManager.AdvanceCommittedRevision(initial.GetCommittedRevision())
 	}
 
 	return nil
@@ -333,8 +326,8 @@ func (f *Follower) handleRecord(stream proto.Primary_FollowClient, record *proto
 
 	// Buffer the revision for watch delivery — it will be read from
 	// the database and delivered when the commit message arrives.
-	if f.watchNotifier != nil {
-		f.watchNotifier.EnqueueWatchRevision(record.GetRevision())
+	if f.watchManager != nil {
+		f.watchManager.EnqueueWatchRevision(record.GetRevision())
 	}
 
 	// Send receipt with embedded heartbeat back to the Primary.
@@ -371,8 +364,8 @@ func (f *Follower) handleRecord(stream proto.Primary_FollowClient, record *proto
 func (f *Follower) handleCommit(committedRevision int64) {
 	f.state.SetCommitted(committedRevision)
 
-	if f.watchNotifier != nil {
-		f.watchNotifier.AdvanceCommittedRevision(committedRevision)
+	if f.watchManager != nil {
+		f.watchManager.AdvanceCommittedRevision(committedRevision)
 	}
 
 	if f.state.Health() == nodestate.HealthHealthy {

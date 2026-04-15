@@ -1,0 +1,207 @@
+// Copyright 2026 Nadrama Pty Ltd
+// SPDX-License-Identifier: Apache-2.0
+
+package watch
+
+import (
+	"log/slog"
+	"sort"
+	"sync"
+
+	"github.com/nadrama-com/netsy/internal/proto"
+	"go.etcd.io/etcd/api/v3/mvccpb"
+
+	pb "go.etcd.io/etcd/api/v3/etcdserverpb"
+)
+
+// RecordReader provides read access to records by revision for watch
+// event delivery.
+type RecordReader interface {
+	FindRecordByRev(revision int64) (*proto.Record, error)
+}
+
+// Manager owns all active watchers and handles event distribution.
+// It is shared by the "clientapi" (which creates watchers), the "primary"
+// write path (which distributes events after commits), and the
+// "replication" follower (which buffers and delivers replicated events).
+type Manager struct {
+	logger *slog.Logger
+	db     RecordReader
+
+	// mu guards the watchers map. Distribute holds a read lock;
+	// Register and Unregister hold a write lock.
+	mu       sync.RWMutex
+	watchers map[int64]*Watcher
+
+	pendingMu sync.Mutex
+	pending   map[int64]struct{}
+}
+
+// NewManager creates a new watch Manager.
+func NewManager(logger *slog.Logger, db RecordReader) *Manager {
+	return &Manager{
+		logger:   logger,
+		db:       db,
+		watchers: make(map[int64]*Watcher),
+		pending:  make(map[int64]struct{}),
+	}
+}
+
+// Register adds a watcher to the manager and returns its assigned ID.
+func (m *Manager) Register(w *Watcher) int64 {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	m.watchers[w.id] = w
+	return w.id
+}
+
+// Unregister removes a watcher from the manager.
+func (m *Manager) Unregister(id int64) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	delete(m.watchers, id)
+}
+
+// Distribute delivers a Record event to all watchers with matching watches.
+func (m *Manager) Distribute(record *proto.Record, prevRecord *proto.Record) {
+	if record == nil {
+		return
+	}
+
+	eventType := mvccpb.PUT
+	if record.Deleted {
+		eventType = mvccpb.DELETE
+	}
+
+	// note: WatchId is set in the watches loop (below), this is a msg template
+	msg := pb.WatchResponse{
+		Header: &pb.ResponseHeader{
+			Revision: record.Revision,
+		},
+		Events: []*mvccpb.Event{
+			{
+				Type: eventType,
+				Kv: &mvccpb.KeyValue{
+					Key:            record.Key,
+					CreateRevision: record.CreateRevision,
+					ModRevision:    record.Revision,
+					Version:        record.Version,
+					Value:          record.Value,
+					Lease:          record.Lease,
+				},
+			},
+		},
+	}
+
+	// note: this value will not be set if prevRecord has already
+	// been compacted. we also do not set on the msg struct
+	// directly as not all watches will request prev_kv=true.
+	var msgPrevKv *mvccpb.KeyValue
+	if prevRecord != nil {
+		msgPrevKv = &mvccpb.KeyValue{
+			Key:            prevRecord.Key,
+			CreateRevision: prevRecord.CreateRevision,
+			ModRevision:    prevRecord.Revision,
+			Version:        prevRecord.Version,
+			Value:          prevRecord.Value,
+			Lease:          prevRecord.Lease,
+		}
+	}
+
+	// obtain read lock on all watchers
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	// loop over all watchers
+	for _, w := range m.watchers {
+		// obtain lock for all watcher watches
+		w.RLock()
+		defer w.RUnlock()
+		// send to all watches that should receive the record
+		for watchID, watch := range w.watches {
+			if isWatchMatch(watch, record) {
+				msg.WatchId = watchID
+				if watch.prevKv {
+					msg.Events[0].PrevKv = msgPrevKv
+				} else {
+					msg.Events[0].PrevKv = nil
+				}
+				w.inboxCh <- msg
+			}
+		}
+	}
+}
+
+// EnqueueWatchRevision buffers a revision for watch delivery once
+// committed_revision advances past it. Used by Replicas that receive
+// records before the corresponding commit message.
+func (m *Manager) EnqueueWatchRevision(revision int64) {
+	if revision <= 0 {
+		return
+	}
+
+	m.pendingMu.Lock()
+	m.pending[revision] = struct{}{}
+	m.pendingMu.Unlock()
+}
+
+// ResetPending discards all buffered revisions. Called when the
+// replication stream reconnects, since any pending entries from the
+// previous stream are stale.
+func (m *Manager) ResetPending() {
+	m.pendingMu.Lock()
+	m.pending = make(map[int64]struct{})
+	m.pendingMu.Unlock()
+}
+
+// AdvanceCommittedRevision delivers all pending watch events with
+// revisions up to and including rev, in ascending revision order.
+func (m *Manager) AdvanceCommittedRevision(rev int64) {
+	m.pendingMu.Lock()
+
+	var ready []int64
+	for r := range m.pending {
+		if r <= rev {
+			ready = append(ready, r)
+		}
+	}
+
+	if len(ready) == 0 {
+		m.pendingMu.Unlock()
+		return
+	}
+
+	sort.Slice(ready, func(i, j int) bool { return ready[i] < ready[j] })
+
+	for _, r := range ready {
+		delete(m.pending, r)
+	}
+	m.pendingMu.Unlock()
+
+	for _, r := range ready {
+		m.distributeFromDB(r)
+	}
+}
+
+// distributeFromDB reads a record from SQLite by revision and delivers
+// it to matching watchers, including the previous record for watches
+// that request prev_kv.
+func (m *Manager) distributeFromDB(revision int64) {
+	record, err := m.db.FindRecordByRev(revision)
+	if err != nil {
+		m.logger.Warn("failed to read record for watch delivery", "revision", revision, "error", err)
+		return
+	}
+
+	var prevRecord *proto.Record
+	if !record.Created && record.PrevRevision > 0 {
+		prevRecord, err = m.db.FindRecordByRev(record.PrevRevision)
+		if err != nil {
+			m.logger.Debug("failed to read prev record for watch delivery", "revision", revision, "prev_revision", record.PrevRevision, "error", err)
+		}
+	}
+
+	m.Distribute(record, prevRecord)
+}

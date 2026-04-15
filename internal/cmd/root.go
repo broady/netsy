@@ -32,7 +32,9 @@ import (
 	"github.com/nadrama-com/netsy/internal/replication"
 	"github.com/nadrama-com/netsy/internal/snapshot"
 	"github.com/nadrama-com/netsy/internal/storage"
+	"github.com/nadrama-com/netsy/internal/watch"
 	"github.com/spf13/cobra"
+	pb "go.etcd.io/etcd/api/v3/etcdserverpb"
 	"go.etcd.io/etcd/server/v3/embed"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"
@@ -236,7 +238,8 @@ func NewRootCmd() *cobra.Command {
 		}
 		gopts = append(gopts, grpc.Creds(credentials.NewTLS(tlsConfigClientAPI)))
 		grpcServer := grpc.NewServer(gopts...)
-		clientApiServer := clientapi.NewServer(filteredLogger, c, db, grpcServer, primarySrv, state)
+		watchManager := watch.NewManager(filteredLogger.With("component", "watch"), db)
+		clientApiServer := clientapi.NewServer(filteredLogger, c, db, grpcServer, primarySrv, peerManager, watchManager, state)
 
 		// Start elector — s3lect election, health server, and elector service.
 		// Created after DB and peer manager so all election dependencies are
@@ -310,7 +313,7 @@ func NewRootCmd() *cobra.Command {
 			peerManager,
 			db,
 			heartbeatSender,
-			clientApiServer,
+			watchManager,
 		)
 
 		// Wire Primary self-degradation: when the Primary's elector
@@ -364,6 +367,7 @@ func NewRootCmd() *cobra.Command {
 		proto.RegisterElectorServer(peerGRPCServer, electionRunner.ElectorServer())
 		proto.RegisterPrimaryServer(peerGRPCServer, primarySrv)
 		proto.RegisterNodeServer(peerGRPCServer, nodeSrv)
+		pb.RegisterKVServer(peerGRPCServer, primary.NewPeerKVServer(clientApiServer.ApplyTxn))
 		peerListener, err := net.Listen("tcp", c.BindPeer)
 		if err != nil {
 			filteredLogger.Error("Unable to create peer gRPC server listener", "err", err)

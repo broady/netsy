@@ -10,6 +10,7 @@ import (
 	"log/slog"
 	"sync"
 
+	pb "go.etcd.io/etcd/api/v3/etcdserverpb"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"
 
@@ -154,6 +155,19 @@ func (m *Manager) PrimaryClient() proto.PrimaryClient {
 		return nil
 	}
 	return proto.NewPrimaryClient(m.primaryConn)
+}
+
+// PrimaryKVClient returns an etcd KV client for the current Primary
+// connection, or nil if none is established. Used by Replicas to proxy
+// write requests to the Primary's Peer API.
+func (m *Manager) PrimaryKVClient() pb.KVClient {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	if m.primaryConn == nil {
+		return nil
+	}
+	return pb.NewKVClient(m.primaryConn)
 }
 
 // Close closes all peer connections.

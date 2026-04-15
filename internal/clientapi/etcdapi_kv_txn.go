@@ -7,13 +7,47 @@ import (
 	"context"
 	"errors"
 
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
+
 	"github.com/nadrama-com/netsy/internal/localdb"
+	"github.com/nadrama-com/netsy/internal/primary"
 	"github.com/nadrama-com/netsy/internal/proto"
 	pb "go.etcd.io/etcd/api/v3/etcdserverpb"
 )
 
-func (cs *ClientAPIServer) Txn(ctx context.Context, r *pb.TxnRequest) (resp *pb.TxnResponse, err error) {
-	// Process transaction on leader
+// Txn handles an etcd Txn (write) request. If this node is the active
+// Primary the request is processed locally; otherwise it is forwarded
+// to the current Primary via the Peer API. Replica watch delivery for
+// forwarded writes happens via the replication stream, not here.
+func (cs *ClientAPIServer) Txn(ctx context.Context, r *pb.TxnRequest) (*pb.TxnResponse, error) {
+	primaryID := cs.state.ClusterState().Primary.NodeID
+	if primaryID != "" && primaryID != cs.config.NodeID {
+		return cs.forwardTxn(ctx, r)
+	}
+	return cs.ApplyTxn(ctx, r)
+}
+
+// forwardTxn validates the TxnRequest locally to reject malformed
+// requests early, then forwards it to the current Primary's KV service
+// on the Peer API.
+func (cs *ClientAPIServer) forwardTxn(ctx context.Context, r *pb.TxnRequest) (*pb.TxnResponse, error) {
+	if _, err := primary.ParseTxnRequest(r); err != nil {
+		return nil, status.Errorf(codes.InvalidArgument, "invalid txn request: %v", err)
+	}
+
+	client := cs.peerClients.PrimaryKVClient()
+	if client == nil {
+		return nil, status.Error(codes.Unavailable, "no connection to primary")
+	}
+
+	return client.Txn(ctx, r)
+}
+
+// ApplyTxn processes a Txn write locally on the Primary. It is called
+// directly for local requests and via the PeerKVServer for proxied
+// requests from Replicas.
+func (cs *ClientAPIServer) ApplyTxn(ctx context.Context, r *pb.TxnRequest) (resp *pb.TxnResponse, err error) {
 	inserted, resp, err := cs.peerServer.LeaderTxn(ctx, r)
 	// If any type of error occurs, logs and then always return well-formed error response
 	if err != nil {
@@ -43,7 +77,7 @@ func (cs *ClientAPIServer) Txn(ctx context.Context, r *pb.TxnRequest) (resp *pb.
 	} else if inserted != nil {
 		cs.logger.Debug("txn updated", "key", string(inserted.Key), "rev", inserted.Revision)
 	}
-	// Replicate to watchers — the record is already in memory
+	// Distribute to watchers — the record is already in memory
 	// and committed_revision has been advanced by LeaderTxn.
 	if inserted != nil {
 		var prevRecord *proto.Record
@@ -53,7 +87,7 @@ func (cs *ClientAPIServer) Txn(ctx context.Context, r *pb.TxnRequest) (resp *pb.
 				cs.logger.Debug("find prev", "key", string(inserted.Key), "rev", inserted.Revision, "prev", inserted.PrevRevision, "err", err.Error())
 			}
 		}
-		cs.Distribute(inserted, prevRecord)
+		cs.watchManager.Distribute(inserted, prevRecord)
 	}
 	return resp, nil
 }
