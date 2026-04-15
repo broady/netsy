@@ -176,3 +176,53 @@ func TestDegradeSelfTransitionsHealth(t *testing.T) {
 		t.Fatalf("Health() = %s, want %s", state.Health(), nodestate.HealthDegraded)
 	}
 }
+
+// TestDegradeSelfInvokesPrimaryCallback verifies that the self-degradation
+// callback is called when the degraded node is in a Primary state.
+func TestDegradeSelfInvokesPrimaryCallback(t *testing.T) {
+	state := nodestate.New(slog.Default())
+	if err := state.SetHealth(nodestate.HealthHealthy); err != nil {
+		t.Fatal(err)
+	}
+	if err := state.SetPrimary(nodestate.PrimaryStarting); err != nil {
+		t.Fatal(err)
+	}
+	if err := state.SetPrimary(nodestate.PrimaryActive); err != nil {
+		t.Fatal(err)
+	}
+
+	s := newTestSender("test-node", state)
+
+	called := false
+	s.SetPrimarySelfDegradeFunc(func() {
+		called = true
+	})
+
+	s.degradeSelf("elector heartbeat failed", nil)
+
+	if !called {
+		t.Fatal("expected primary self-degrade callback to be invoked")
+	}
+}
+
+// TestDegradeSelfSkipsCallbackForReplica verifies that the self-degradation
+// callback is not called when the degraded node is a Replica.
+func TestDegradeSelfSkipsCallbackForReplica(t *testing.T) {
+	state := nodestate.New(slog.Default())
+	if err := state.SetHealth(nodestate.HealthHealthy); err != nil {
+		t.Fatal(err)
+	}
+
+	s := newTestSender("test-node", state)
+
+	called := false
+	s.SetPrimarySelfDegradeFunc(func() {
+		called = true
+	})
+
+	s.degradeSelf("elector heartbeat failed", nil)
+
+	if called {
+		t.Fatal("expected primary self-degrade callback NOT to be invoked for replica")
+	}
+}

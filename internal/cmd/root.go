@@ -289,7 +289,8 @@ func NewRootCmd() *cobra.Command {
 			jitterWaitThenExit(filteredLogger)
 		}
 
-		// Create and start heartbeat sender
+		// Create heartbeat sender (started after follower is constructed
+		// so the self-degradation callback can reference it).
 		heartbeatSender := heartbeat.NewSender(
 			filteredLogger.With("component", "heartbeat"),
 			c.NodeID,
@@ -300,7 +301,6 @@ func NewRootCmd() *cobra.Command {
 			c.Elector.HeartbeatInterval.Duration,
 			c.Replication.HeartbeatInterval.Duration,
 		)
-		go heartbeatSender.Run(ctx)
 
 		// Create the replication follower.
 		follower := replication.NewFollower(
@@ -312,6 +312,20 @@ func NewRootCmd() *cobra.Command {
 			heartbeatSender,
 			clientApiServer,
 		)
+
+		// Wire Primary self-degradation: when the Primary's elector
+		// heartbeat fails, send a signal to trigger the normal shutdown
+		// path which will drain, flush, deregister, and exit. The process
+		// restarting will likely lead to it becoming a Replica.
+		heartbeatSender.SetPrimarySelfDegradeFunc(func() {
+			filteredLogger.Warn("primary self-degradation triggered, initiating shutdown")
+			select {
+			case sigCh <- syscall.SIGTERM:
+			default:
+			}
+		})
+
+		go heartbeatSender.Run(ctx)
 
 		// Complete node loading and backfill before serving client traffic.
 		bootstrapResult, err := bootstrap.Run(
@@ -404,6 +418,17 @@ func NewRootCmd() *cobra.Command {
 			filteredLogger.Error("peer grpc server failed, starting shutdown", "error", err)
 		}
 		signal.Stop(sigCh)
+
+		// If this node is the Primary, drain writes and flush the chunk
+		// buffer to object storage before proceeding with deregistration.
+		if state.Primary() != nodestate.PrimaryReplica {
+			drainCtx, drainCancel := context.WithTimeout(context.Background(), 30*time.Second)
+			if err := primarySrv.GracefulDrain(drainCtx); err != nil {
+				filteredLogger.Error("primary graceful drain failed", "error", err)
+			}
+			drainCancel()
+		}
+
 		cancel() // stop heartbeat sender and other background goroutines
 
 		// Mark node as degraded health

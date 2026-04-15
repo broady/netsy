@@ -111,7 +111,7 @@ func TestPrimaryTransitions(t *testing.T) {
 		{"replica->active", func(s *State) {}, PrimaryActive, true},
 		{"replica->draining", func(s *State) {}, PrimaryDraining, true},
 		{"starting->replica", func(s *State) { s.SetPrimary(PrimaryStarting) }, PrimaryReplica, false},
-		{"starting->draining", func(s *State) { s.SetPrimary(PrimaryStarting) }, PrimaryDraining, true},
+		{"starting->draining", func(s *State) { s.SetPrimary(PrimaryStarting) }, PrimaryDraining, false},
 		{"active->replica", func(s *State) {
 			s.SetPrimary(PrimaryStarting)
 			s.SetPrimary(PrimaryActive)

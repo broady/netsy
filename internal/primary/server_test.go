@@ -11,6 +11,7 @@ import (
 
 	"github.com/nadrama-com/netsy/internal/nodestate"
 	"github.com/nadrama-com/netsy/internal/proto"
+	"github.com/nadrama-com/netsy/internal/storage"
 )
 
 func newTestServer(t *testing.T, state *nodestate.State, heartbeatInterval time.Duration, degradationCount int) *Server {
@@ -19,6 +20,7 @@ func newTestServer(t *testing.T, state *nodestate.State, heartbeatInterval time.
 		logger:            slog.Default(),
 		state:             state,
 		replicas:          NewReplicas(),
+		followStreams:      make(map[string]*followSession),
 		heartbeatInterval: heartbeatInterval,
 		degradationCount:  degradationCount,
 	}
@@ -118,5 +120,120 @@ func TestDegradationSkipsAlreadyDegraded(t *testing.T) {
 
 	if entry.Health() != nodestate.HealthDegraded {
 		t.Fatal("expected node-a to remain degraded")
+	}
+}
+
+func TestGracefulDrainActivePrimary(t *testing.T) {
+	store := storage.NewMemoryStore()
+	state := nodestate.New(slog.Default())
+	if err := state.SetPrimary(nodestate.PrimaryStarting); err != nil {
+		t.Fatal(err)
+	}
+	if err := state.SetPrimary(nodestate.PrimaryActive); err != nil {
+		t.Fatal(err)
+	}
+
+	srv := &Server{
+		logger: slog.Default(),
+		state:  state,
+		chunkBuffer: newChunkBuffer(
+			slog.Default(), state, store, "node-a", 0, 0,
+		),
+		replicas:     NewReplicas(),
+		followStreams: make(map[string]*followSession),
+	}
+
+	// Buffer a record so the flush has work to do.
+	record := &proto.Record{Revision: 1, Key: []byte("key"), Value: []byte("val")}
+	srv.chunkBuffer.records = append(srv.chunkBuffer.records, record)
+	srv.chunkBuffer.bytes = 10
+
+	ctx := context.Background()
+	if err := srv.GracefulDrain(ctx); err != nil {
+		t.Fatalf("GracefulDrain error: %v", err)
+	}
+
+	if state.Primary() != nodestate.PrimaryDraining {
+		t.Fatalf("expected draining, got %s", state.Primary())
+	}
+
+	// Verify chunk buffer was flushed.
+	if len(srv.chunkBuffer.records) != 0 {
+		t.Fatalf("expected chunk buffer empty, got %d records", len(srv.chunkBuffer.records))
+	}
+}
+
+func TestGracefulDrainNoOpForReplica(t *testing.T) {
+	state := nodestate.New(slog.Default())
+	srv := &Server{
+		logger: slog.Default(),
+		state:  state,
+	}
+
+	if err := srv.GracefulDrain(context.Background()); err != nil {
+		t.Fatalf("GracefulDrain for replica should succeed: %v", err)
+	}
+}
+
+func TestGracefulDrainFromStarting(t *testing.T) {
+	store := storage.NewMemoryStore()
+	state := nodestate.New(slog.Default())
+	if err := state.SetPrimary(nodestate.PrimaryStarting); err != nil {
+		t.Fatal(err)
+	}
+
+	srv := &Server{
+		logger: slog.Default(),
+		state:  state,
+		chunkBuffer: newChunkBuffer(
+			slog.Default(), state, store, "node-a", 0, 0,
+		),
+	}
+
+	if err := srv.GracefulDrain(context.Background()); err != nil {
+		t.Fatalf("GracefulDrain error: %v", err)
+	}
+
+	if state.Primary() != nodestate.PrimaryDraining {
+		t.Fatalf("expected draining, got %s", state.Primary())
+	}
+}
+
+func TestResignLeadership(t *testing.T) {
+	state := nodestate.New(slog.Default())
+	if err := state.SetPrimary(nodestate.PrimaryStarting); err != nil {
+		t.Fatal(err)
+	}
+	if err := state.SetPrimary(nodestate.PrimaryActive); err != nil {
+		t.Fatal(err)
+	}
+	if err := state.SetPrimary(nodestate.PrimaryDraining); err != nil {
+		t.Fatal(err)
+	}
+
+	srv := newTestServer(t, state, 0, 0)
+
+	if err := srv.ResignLeadership(); err != nil {
+		t.Fatalf("ResignLeadership error: %v", err)
+	}
+
+	if state.Primary() != nodestate.PrimaryReplica {
+		t.Fatalf("expected replica, got %s", state.Primary())
+	}
+}
+
+func TestResignLeadershipRequiresDraining(t *testing.T) {
+	state := nodestate.New(slog.Default())
+	if err := state.SetPrimary(nodestate.PrimaryStarting); err != nil {
+		t.Fatal(err)
+	}
+	if err := state.SetPrimary(nodestate.PrimaryActive); err != nil {
+		t.Fatal(err)
+	}
+
+	srv := newTestServer(t, state, 0, 0)
+
+	if err := srv.ResignLeadership(); err == nil {
+		t.Fatal("expected error when not draining")
 	}
 }

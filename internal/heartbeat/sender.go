@@ -20,6 +20,11 @@ type RevisionSource interface {
 	LatestRevision() (int64, error)
 }
 
+// PrimarySelfDegradeFunc is called when this node is the Primary and it
+// self-degrades due to heartbeat failure. The callback should trigger the
+// drain-flush-resign sequence asynchronously.
+type PrimarySelfDegradeFunc func()
+
 // Sender sends heartbeats to the Elector and Primary on their respective
 // cadences. It uses the following routing logic:
 //
@@ -36,6 +41,8 @@ type Sender struct {
 	startTime           int64
 	electorInterval     time.Duration
 	replicationInterval time.Duration
+
+	onPrimarySelfDegrade PrimarySelfDegradeFunc
 
 	// lastReceiptSent tracks when the last Receipt was sent to the
 	// Primary, which should be updated atomically by the replication
@@ -69,6 +76,13 @@ func NewSender(
 		electorInterval:     electorInterval,
 		replicationInterval: replicationInterval,
 	}
+}
+
+// SetPrimarySelfDegradeFunc sets a callback invoked when this node is the
+// Primary and self-degrades due to heartbeat failure. Must be called before
+// Run.
+func (s *Sender) SetPrimarySelfDegradeFunc(fn PrimarySelfDegradeFunc) {
+	s.onPrimarySelfDegrade = fn
 }
 
 // MarkReceiptSent records that a Receipt was just sent to the Primary,
@@ -255,10 +269,14 @@ func (s *Sender) BuildNodeState() *proto.NodeState {
 }
 
 // degradeSelf transitions this node to Degraded once and logs the cause.
+// When this node is the Primary, the self-degradation callback is invoked
+// to trigger the drain-flush-resign sequence.
 func (s *Sender) degradeSelf(reason string, cause error) {
 	if s.state.Health() == nodestate.HealthDegraded {
 		return
 	}
+
+	wasPrimary := s.state.Primary() != nodestate.PrimaryReplica
 
 	if err := s.state.SetHealth(nodestate.HealthDegraded); err != nil {
 		s.logger.Warn("failed to self-degrade after heartbeat failure",
@@ -273,4 +291,8 @@ func (s *Sender) degradeSelf(reason string, cause error) {
 		"reason", reason,
 		"cause", cause,
 	)
+
+	if wasPrimary && s.onPrimarySelfDegrade != nil {
+		s.onPrimarySelfDegrade()
+	}
 }

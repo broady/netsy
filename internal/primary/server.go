@@ -6,6 +6,7 @@ package primary
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 	"sync"
 	"sync/atomic"
@@ -149,6 +150,49 @@ func (s *Server) StopServices() {
 // Replicas returns the server's Replica tracker.
 func (s *Server) Replicas() *Replicas {
 	return s.replicas
+}
+
+// GracefulDrain transitions the Primary to Draining, flushes the chunk buffer
+// to object storage, and stops Primary services. It is the shutdown sequence
+// that must be called before the normal node deregistration path when the
+// shutting-down node is the Primary. Returns an error if the flush fails;
+// callers should still proceed with shutdown even on error.
+func (s *Server) GracefulDrain(ctx context.Context) error {
+	ps := s.state.Primary()
+	if ps == nodestate.PrimaryReplica {
+		return nil
+	}
+
+	// Transition to Draining if currently Active or Starting.
+	if ps == nodestate.PrimaryActive || ps == nodestate.PrimaryStarting {
+		if err := s.state.SetPrimary(nodestate.PrimaryDraining); err != nil {
+			return fmt.Errorf("transition to draining: %w", err)
+		}
+	}
+
+	// Flush the chunk buffer so all buffered records reach object storage.
+	if err := s.chunkBuffer.flush(ctx, "shutdown"); err != nil {
+		s.logger.Error("chunk buffer flush failed during graceful drain", "error", err)
+		return fmt.Errorf("chunk buffer flush: %w", err)
+	}
+
+	s.logger.Info("primary graceful drain completed")
+	return nil
+}
+
+// ResignLeadership transitions the Primary from Draining back to Replica,
+// giving up leadership so the Elector can elect a new Primary. It is used by
+// the self-degradation path after a successful drain and flush.
+func (s *Server) ResignLeadership() error {
+	if s.state.Primary() != nodestate.PrimaryDraining {
+		return fmt.Errorf("cannot resign leadership: primary state is %s, not draining", s.state.Primary())
+	}
+	if err := s.state.SetPrimary(nodestate.PrimaryReplica); err != nil {
+		return fmt.Errorf("transition from draining to replica: %w", err)
+	}
+	s.StopServices()
+	s.logger.Info("primary leadership resigned")
+	return nil
 }
 
 // initializeRevisionCounter sets the next revision ID based on the highest

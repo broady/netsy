@@ -236,7 +236,7 @@ const objectStorageRecoveryMaxBackoff = 30 * time.Second
 
 // startObjectStorageRecovery transitions the Primary to Draining and retries
 // the failed object storage upload with exponential backoff in a background
-// goroutine. On success the Primary relinquishes leadership and restarts as
+// goroutine. On success the Primary resigns leadership and restarts as
 // a Replica, allowing a fresh election.
 func (ps *Server) startObjectStorageRecovery(record *proto.Record, cause error) {
 	ps.logger.Error("object storage upload failed after retry, starting recovery",
@@ -259,7 +259,7 @@ func (ps *Server) startObjectStorageRecovery(record *proto.Record, cause error) 
 			cancel()
 
 			if err == nil {
-				ps.logger.Info("object storage recovery upload succeeded, relinquishing leadership",
+				ps.logger.Info("object storage recovery upload succeeded, resigning leadership",
 					"revision", record.Revision,
 				)
 				// Transition Draining -> Replica to give up leadership.
