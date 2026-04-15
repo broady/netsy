@@ -6,6 +6,7 @@ package localdb
 import (
 	"bytes"
 	"database/sql"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -13,6 +14,10 @@ import (
 	"github.com/nadrama-com/netsy/internal/proto"
 	"google.golang.org/protobuf/types/known/timestamppb"
 )
+
+// ErrReplicateConflict is returned when a replicated record has the same
+// revision as an existing record but different contents.
+var ErrReplicateConflict = errors.New("replicate conflict")
 
 // ReplicateRecord copies an authoritative record into SQLite during live
 // replication or object-storage backfill. It preserves the incoming revision
@@ -121,7 +126,7 @@ func (db *database) ReplicateRecord(record *proto.Record) (*proto.Record, error)
 				return nil, fmt.Errorf("read existing revision %d after duplicate insert: %w", record.GetRevision(), findErr)
 			}
 			if !recordsEqualForReplication(existing, record) {
-				return nil, fmt.Errorf("revision %d already exists with different contents", record.GetRevision())
+				return nil, fmt.Errorf("%w: revision %d already exists with different contents", ErrReplicateConflict, record.GetRevision())
 			}
 			return existing, nil
 		}
@@ -181,4 +186,42 @@ func sameTimestamp(a, b *timestamppb.Timestamp) bool {
 		return a == b
 	}
 	return a.AsTime().Equal(b.AsTime())
+}
+
+// ReplicateTentativeRecord copies an authoritative record into SQLite,
+// allowing overwrite of tentative records whose revision exceeds
+// committedRevision. Records at or below committedRevision are treated
+// as committed and handled by the standard ReplicateRecord path, which
+// only accepts exact duplicates.
+//
+// This method supports the same-revision retry scenario: after a quorum
+// rollback, the Primary retries via Path 1 (sync object storage) and
+// reuses the same revision number. Replicas that stored the tentative
+// record accept the overwrite because records above committed_revision
+// are not yet committed.
+func (db *database) ReplicateTentativeRecord(record *proto.Record, committedRevision int64) (*proto.Record, error) {
+	// Committed records cannot be overwritten — delegate to the standard
+	// idempotent-only path.
+	if record.Revision <= committedRevision {
+		return db.ReplicateRecord(record)
+	}
+
+	// Tentative record — attempt normal insert first.
+	inserted, err := db.ReplicateRecord(record)
+	if err == nil {
+		return inserted, nil
+	}
+
+	// If the error is not a content mismatch conflict, propagate it.
+	if !errors.Is(err, ErrReplicateConflict) {
+		return nil, err
+	}
+
+	// Tentative record conflict — overwrite by deleting the old row and
+	// re-inserting with the new contents.
+	if _, delErr := db.conn.Exec("DELETE FROM records WHERE revision = ?", record.Revision); delErr != nil {
+		return nil, fmt.Errorf("delete tentative record revision %d: %w", record.Revision, delErr)
+	}
+
+	return db.ReplicateRecord(record)
 }

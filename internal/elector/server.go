@@ -121,11 +121,13 @@ func (s *Server) RegisterNode(ctx context.Context, req *proto.RegisterNodeReques
 		HealthState:            nodestate.HealthLoading,
 	})
 
-	cs := nodestate.ClusterStateToProto(s.state.ClusterState())
+	cs := s.state.ClusterState()
+	cs.NodeCount = s.nodeMap.Count()
+	protoCS := nodestate.ClusterStateToProto(cs)
 
 	return &proto.RegisterNodeResponse{
 		MemberId:     memberID,
-		ClusterState: cs,
+		ClusterState: protoCS,
 	}, nil
 }
 
@@ -162,7 +164,9 @@ func (s *Server) GetClusterState(_ context.Context, _ *emptypb.Empty) (resp *pro
 		return nil, status.Error(codes.Unavailable, "elector is still bootstrapping")
 	}
 
-	return nodestate.ClusterStateToProto(s.state.ClusterState()), nil
+	cs := s.state.ClusterState()
+	cs.NodeCount = s.nodeMap.Count()
+	return nodestate.ClusterStateToProto(cs), nil
 }
 
 // SendHeartbeat receives a NodeState heartbeat from a Node, updating the

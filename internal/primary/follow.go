@@ -189,6 +189,7 @@ func (s *Server) followRecvLoop(stream proto.Primary_FollowServer, nodeID string
 
 		if msg.GetRevision() > 0 {
 			s.replicas.UpdateReceipt(nodeID, health, primary, hb.GetLatestRevision())
+			s.collectReceipt(nodeID, msg.GetRevision())
 		} else {
 			s.replicas.UpdateHeartbeat(nodeID, health, primary, hb.GetLatestRevision())
 		}

@@ -20,6 +20,7 @@ const pushTimeout = 5 * time.Second
 // block subsequent pushes.
 func (s *Server) pushClusterState(ctx context.Context) {
 	cs := s.state.ClusterState()
+	cs.NodeCount = s.nodeMap.Count()
 	protoCS := nodestate.ClusterStateToProto(cs)
 
 	entries := s.nodeMap.All()

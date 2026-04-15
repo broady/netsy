@@ -10,10 +10,14 @@ type NodeInfo struct {
 	PeerAdvertiseAddr string
 }
 
-// ClusterState holds the current Elector and Primary as seen by this Node.
+// ClusterState holds the current Elector, Primary, and registered node
+// count as seen by this Node. It is pushed by the Elector to all Nodes
+// whenever the Elector or Primary role changes, and returned in
+// RegisterNode and GetClusterState responses.
 type ClusterState struct {
-	Elector NodeInfo
-	Primary NodeInfo
+	Elector   NodeInfo
+	Primary   NodeInfo
+	NodeCount int
 }
 
 // ClusterState returns a copy of the current ClusterState.

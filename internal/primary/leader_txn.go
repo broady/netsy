@@ -8,15 +8,21 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/nadrama-com/netsy/internal/commonapi"
 	"github.com/nadrama-com/netsy/internal/localdb"
+	"github.com/nadrama-com/netsy/internal/nodestate"
 	"github.com/nadrama-com/netsy/internal/proto"
 	pb "go.etcd.io/etcd/api/v3/etcdserverpb"
 	googlepb "google.golang.org/protobuf/proto"
 )
 
 var ErrUnsupported = errors.New("Unsupported request - netsy only implementes the Kubernetes etcd API subet")
+
+// errQuorumNotMet is returned to the client when a quorum transaction
+// fails to collect enough Receipts within the timeout.
+var errQuorumNotMet = errors.New("quorum not met: insufficient replica receipts within timeout")
 
 // LeaderTxn is our backend for the etcd transaction API, responsible for committing changes.
 //
@@ -70,15 +76,17 @@ func (ps *Server) LeaderTxn(ctx context.Context, r *pb.TxnRequest) (record *prot
 	}
 	// Use the instance ID from config as the leader ID
 	record.LeaderId = ps.config.NodeID
-	// Assign the next revision ID
+	// Assign the next revision ID. On quorum rollback the same revision is
+	// reused because nextRevisionID is only incremented after successful commit.
 	record.Revision = ps.nextRevisionID.Load()
-	// TODO: All writes use Path 1 (synchronous object storage) until Phase 17
-	// implements quorum transactions. Log a warning if quorum is configured
-	// but not yet supported.
-	if *ps.config.Replication.Quorum != 0 {
-		ps.logger.Warn("quorum transactions not yet implemented, using synchronous object storage writes")
-	}
-	// Use transaction for synchronous object storage writes (Path 1)
+	// Determine whether to use Path 1 (sync object storage) or Path 2
+	// (quorum transactions) for this write.
+	strategy := selectTxnStrategy(
+		*ps.config.Replication.Quorum,
+		ps.state.ClusterState().NodeCount,
+		ps.replicas.HealthyForQuorumCount(),
+	)
+	// Use transaction for writes
 	tx, err := ps.db.BeginTx()
 	if err != nil {
 		return nil, nil, fmt.Errorf("failed to begin transaction: %w", err)
@@ -103,33 +111,181 @@ func (ps *Server) LeaderTxn(ctx context.Context, r *pb.TxnRequest) (record *prot
 		tx.Rollback()
 		return nil, nil, fmt.Errorf("error for %s: %w", record.Key, err)
 	} else {
-		// Upload to object storage within transaction boundary only on successful insert
-		err = ps.writeRecord(ctx, inserted)
-		if err != nil {
-			tx.Rollback()
-			return nil, nil, fmt.Errorf("object storage upload failed: %w", err)
+		// Record inserted successfully, commit via selected path.
+		if strategy.useQuorum {
+			err = ps.executeQuorumTxn(ctx, tx, inserted, strategy)
+		} else {
+			err = ps.executeObjectStorageTxn(ctx, tx, inserted)
 		}
-		// Commit transaction
-		err = tx.Commit()
 		if err != nil {
-			return nil, nil, fmt.Errorf("failed to commit transaction: %w", err)
+			return nil, nil, err
 		}
-		// Increment revision counter only after successful commit
-		ps.nextRevisionID.Add(1)
-		// Advance committed revision and broadcast to replicas
-		ps.BroadcastRecord(inserted)
-		ps.state.SetCommitted(inserted.Revision)
-		ps.BroadcastCommit(inserted.Revision)
-		// Calculate record size for snapshot tracking
-		recordSize := int64(googlepb.Size(inserted))
-		// Check if snapshot should be created
-		ps.checkAndCreateSnapshot(inserted.Revision, recordSize)
 	}
 	resp, err := BuildTxnResponse(inserted, rangeResp)
 	if err != nil {
 		return nil, nil, fmt.Errorf("error building response: %w", err)
 	}
 	return inserted, resp, nil
+}
+
+// executeObjectStorageTxn commits a transaction via synchronous object
+// storage write (Path 1). the underlying writeRecord invocation retries
+// once on failure; if both attempts fail, the SQLite transaction is
+// rolled back and the object storage recovery sequence begins.
+func (ps *Server) executeObjectStorageTxn(ctx context.Context, tx *localdb.Tx, record *proto.Record) error {
+	err := ps.writeRecord(ctx, record)
+	if err != nil {
+		tx.Rollback()
+		ps.startObjectStorageRecovery(record, err)
+		return fmt.Errorf("object storage upload failed: %w", err)
+	}
+	// Commit SQLite transaction
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("failed to commit transaction: %w", err)
+	}
+	// Increment revision counter only after successful commit
+	ps.nextRevisionID.Add(1)
+	// Broadcast record to replicas asynchronously (do not wait for Receipt)
+	ps.BroadcastRecord(record)
+	// Advance committed revision and notify replicas
+	ps.state.SetCommitted(record.Revision)
+	ps.BroadcastCommit(record.Revision)
+	// Calculate record size for snapshot tracking
+	recordSize := int64(googlepb.Size(record))
+	ps.checkAndCreateSnapshot(record.Revision, recordSize)
+	return nil
+}
+
+// executeQuorumTxn commits a transaction via quorum Receipts from Replicas
+// (Path 2). It sends the record to all connected healthy Replicas, then
+// waits for the required number of durable Receipts within the timeout.
+// On success the SQLite transaction is committed and the record is buffered
+// for async object storage write. On failure the transaction is rolled back,
+// timed-out Replicas are degraded, and a buffer flush is triggered.
+func (ps *Server) executeQuorumTxn(ctx context.Context, tx *localdb.Tx, record *proto.Record, strategy txnStrategy) error {
+	collector := newReceiptCollector(record.Revision, strategy.requiredReceipts)
+	ps.setReceiptCollector(collector)
+	defer ps.clearReceiptCollector()
+
+	// Send record to all connected Replicas.
+	ps.BroadcastRecord(record)
+
+	// Wait for quorum receipts.
+	if !collector.wait(quorumReceiptTimeout) {
+		// Quorum not met — rollback.
+		tx.Rollback()
+
+		// Mark timed-out Replicas as unhealthy.
+		for _, nodeID := range collector.unackedQuorumNodeIDs(ps.replicas.All()) {
+			if entry, ok := ps.replicas.Get(nodeID); ok {
+				ps.logger.Warn("marking replica degraded due to quorum receipt timeout",
+					"node_id", nodeID,
+					"revision", record.Revision,
+				)
+				entry.SetHealth(nodestate.HealthDegraded)
+			}
+		}
+
+		// Trigger async flush of previously buffered records to object
+		// storage to ensure already-committed data reaches durable storage
+		// before we fall back to Path 1.
+		go func() {
+			flushCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+			defer cancel()
+			if err := ps.chunkBuffer.flush(flushCtx, "quorum_rollback"); err != nil {
+				ps.logger.Warn("quorum rollback buffer flush failed", "error", err)
+			}
+		}()
+
+		// committed_revision is NOT advanced. nextRevisionID is NOT
+		// incremented — the same revision will be reused on retry via
+		// Path 1.
+		return errQuorumNotMet
+	}
+
+	// Quorum met — commit SQLite transaction.
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("failed to commit quorum transaction: %w", err)
+	}
+
+	// Increment revision counter
+	ps.nextRevisionID.Add(1)
+
+	// Advance committed revision before responding to the client so
+	// Replicas can serve the record on read-after-write.
+	ps.state.SetCommitted(record.Revision)
+	ps.BroadcastCommit(record.Revision)
+
+	// Buffer record for async object storage write.
+	if err := ps.chunkBuffer.bufferRecord(ctx, record); err != nil {
+		ps.logger.Warn("chunk buffer failed after quorum commit",
+			"revision", record.Revision,
+			"error", err,
+		)
+	}
+
+	// Calculate record size for snapshot tracking
+	recordSize := int64(googlepb.Size(record))
+	ps.checkAndCreateSnapshot(record.Revision, recordSize)
+	return nil
+}
+
+// objectStorageRecoveryMaxBackoff caps the exponential backoff for object
+// storage recovery retries.
+const objectStorageRecoveryMaxBackoff = 30 * time.Second
+
+// startObjectStorageRecovery transitions the Primary to Draining and retries
+// the failed object storage upload with exponential backoff in a background
+// goroutine. On success the Primary relinquishes leadership and restarts as
+// a Replica, allowing a fresh election.
+func (ps *Server) startObjectStorageRecovery(record *proto.Record, cause error) {
+	ps.logger.Error("object storage upload failed after retry, starting recovery",
+		"revision", record.Revision,
+		"error", cause,
+	)
+	if ps.state.Primary() == nodestate.PrimaryActive {
+		if err := ps.state.SetPrimary(nodestate.PrimaryDraining); err != nil {
+			ps.logger.Error("failed to transition to draining for object storage recovery",
+				"error", err,
+			)
+		}
+	}
+
+	go func() {
+		backoff := time.Second
+		for {
+			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			err := ps.writeRecordIfMissing(ctx, record)
+			cancel()
+
+			if err == nil {
+				ps.logger.Info("object storage recovery upload succeeded, relinquishing leadership",
+					"revision", record.Revision,
+				)
+				// Transition Draining -> Replica to give up leadership.
+				if err := ps.state.SetPrimary(nodestate.PrimaryReplica); err != nil {
+					ps.logger.Error("failed to transition to replica after recovery",
+						"error", err,
+					)
+				}
+				return
+			}
+
+			ps.logger.Warn("object storage recovery upload failed, retrying",
+				"revision", record.Revision,
+				"backoff", backoff,
+				"error", err,
+			)
+
+			time.Sleep(backoff)
+			if backoff < objectStorageRecoveryMaxBackoff {
+				backoff *= 2
+				if backoff > objectStorageRecoveryMaxBackoff {
+					backoff = objectStorageRecoveryMaxBackoff
+				}
+			}
+		}
+	}()
 }
 
 // ParseTxnRequest validates a pb.TxnRequest and creates a proto.Record

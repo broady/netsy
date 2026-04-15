@@ -35,6 +35,7 @@ type Database interface {
 	InsertRecord(record *proto.Record, tx *Tx) (*proto.Record, error)
 	BeginTx() (*Tx, error)
 	ReplicateRecord(record *proto.Record) (*proto.Record, error)
+	ReplicateTentativeRecord(record *proto.Record, committedRevision int64) (*proto.Record, error)
 	Size() (int64, error)
 	Close() error
 }

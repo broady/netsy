@@ -58,6 +58,13 @@ type Server struct {
 	// nextRevisionID holds the next revision ID to assign.
 	// Managed atomically to ensure thread-safe access.
 	nextRevisionID atomic.Int64
+
+	// receiptCollector is non-nil when a quorum transaction is waiting for
+	// Receipts. At most one is active at a time because leaderTxnMutex
+	// serializes all writes. receiptCollectorMu guards the active receipt
+	// collector.
+	receiptCollector   *receiptCollector
+	receiptCollectorMu sync.Mutex
 }
 
 // NewServer constructs the Primary server and seeds its next revision
@@ -257,4 +264,32 @@ func (s *Server) checkDegradation() {
 
 		entry.SetHealth(nodestate.HealthDegraded)
 	}
+}
+
+// collectReceipt is called from the Follow receive loop when a Replica
+// sends a Receipt. If a receipt collector is active for the receipted
+// revision, the receipt is forwarded to it.
+func (s *Server) collectReceipt(nodeID string, revision int64) {
+	s.receiptCollectorMu.Lock()
+	c := s.receiptCollector
+	s.receiptCollectorMu.Unlock()
+
+	if c == nil || c.revision != revision {
+		return
+	}
+	c.collectReceipt(nodeID)
+}
+
+// setReceiptCollector installs a new receipt collector as the active one.
+func (s *Server) setReceiptCollector(c *receiptCollector) {
+	s.receiptCollectorMu.Lock()
+	s.receiptCollector = c
+	s.receiptCollectorMu.Unlock()
+}
+
+// clearReceiptCollector removes the active receipt collector.
+func (s *Server) clearReceiptCollector() {
+	s.receiptCollectorMu.Lock()
+	s.receiptCollector = nil
+	s.receiptCollectorMu.Unlock()
 }

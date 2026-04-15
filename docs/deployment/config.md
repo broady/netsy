@@ -169,13 +169,15 @@ GCS example:
 | `elector.primary_prior_timeout` | — | Timeout for contacting previous Primary during election |
 | `replication.quorum` | `-1` | Quorum config: `-1` (majority), `0` (disabled), positive int (static) |
 | `replication.heartbeat_interval` | — | Standalone heartbeat to Primary when no Receipt sent within window |
-| `replication.degradation_count` | `2` | Number of consecutive missed Heartbeats/Receipts before Replica is excluded from quorum |
+| `replication.degradation_count` | `2` | Number of consecutive missed Heartbeats/Receipts before Replica is excluded from quorum; the Primary may also mark a Replica `Degraded` immediately on quorum receipt timeout |
 | `replication.chunk_buffer.threshold_size_mb` | — | Chunk Buffer size-based flush threshold |
 | `replication.chunk_buffer.threshold_age_minutes` | — | Chunk Buffer time-based flush threshold |
 | `snapshot.threshold_records` | `10000` | Snapshot after N records |
 | `snapshot.threshold_size_mb` | `10000` | Snapshot when chunks exceed N MB |
 | `snapshot.threshold_age_minutes` | `0` | Snapshot after N minutes (`0` = disabled) |
 | `compaction_interval` | — | Compaction scheduling interval |
+
+For replication, the heartbeat-based degradation window is `replication.heartbeat_interval × replication.degradation_count`. If that window is longer than the quorum receipt timeout, a Replica may be marked `Degraded` immediately on quorum timeout and then recover quickly on a subsequent Heartbeat or Receipt.
 
 ### Object Storage Connectivity (env vars)
 

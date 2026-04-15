@@ -69,6 +69,10 @@ This design means the Elector and Primary use the same server-side code path for
 
 The Elector and Primary both mark a Node as `Degraded` if it has missed 2 consecutive Heartbeats. Likewise, a Node must mark itself as `Degraded` if it has failed to successfully send a Receipt or a Heartbeat after 1 immediate retry.
 
+The Primary may also mark a Replica `Degraded` immediately when it misses a quorum receipt deadline, since that Replica is not healthy enough to participate in quorum transactions at the configured latency budget.
+
+This can also recover quickly: if the heartbeat-based degradation window is longer than the quorum timeout, the timeout-triggered `Degraded` state primarily acts as a short-lived fast path to force the next client retry onto synchronous object storage writes until the Replica proves it is healthy again via a subsequent Heartbeat or Receipt.
+
 When the Primary marks a Node as `Degraded`, it will then stop counting that Replica as healthy for quorum, and if the healthy Replica count drops below the configured quorum threshold, the Primary falls back to synchronous object storage writes. This ensures that any committed writes are durably stored in S3 before the client receives a response, and no partitioned Replica can hold un-synced data that is not also in object storage.
 
 ## Elector Leader Election
@@ -111,7 +115,7 @@ Leader election will continue retrying every 500 milliseconds until successful, 
 
 Once an Elector is newly elected and has loaded its Service Discovery map, it can begin to push Cluster State to each Node, and receive Node State information via Heartbeats from each Node.
 
-- Cluster State includes the current Elector and current Primary, expressed as NodeInfo (containing Node ID, stable etcd `member_id`, and Peer advertise address).
+- Cluster State includes the current Elector and current Primary, expressed as NodeInfo (containing Node ID, stable etcd `member_id`, and Peer advertise address), along with the total registered node count used for majority quorum calculation.
 
 - Node State is received by the Elector from each Node via Heartbeats (sent on a regular cadence, and embedded in every Receipt sent to the Primary). This includes the Node's current Health State, current Primary State, and latest Revision.
 

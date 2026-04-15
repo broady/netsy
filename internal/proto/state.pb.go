@@ -335,7 +335,8 @@ func (x *NodeInfo) GetPeerAdvertiseAddress() string {
 type ClusterState struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Elector       *NodeInfo              `protobuf:"bytes,1,opt,name=elector,proto3" json:"elector,omitempty"`
-	Primary       *NodeInfo              `protobuf:"bytes,2,opt,name=primary,proto3" json:"primary,omitempty"` // empty if no Primary elected
+	Primary       *NodeInfo              `protobuf:"bytes,2,opt,name=primary,proto3" json:"primary,omitempty"`                       // empty if no Primary elected
+	NodeCount     int32                  `protobuf:"varint,3,opt,name=node_count,json=nodeCount,proto3" json:"node_count,omitempty"` // total registered Nodes for quorum calculation
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -384,6 +385,13 @@ func (x *ClusterState) GetPrimary() *NodeInfo {
 	return nil
 }
 
+func (x *ClusterState) GetNodeCount() int32 {
+	if x != nil {
+		return x.NodeCount
+	}
+	return 0
+}
+
 var File_proto_state_proto protoreflect.FileDescriptor
 
 const file_proto_state_proto_rawDesc = "" +
@@ -400,10 +408,12 @@ const file_proto_state_proto_rawDesc = "" +
 	"\bNodeInfo\x12\x17\n" +
 	"\anode_id\x18\x01 \x01(\tR\x06nodeId\x12\x1b\n" +
 	"\tmember_id\x18\x02 \x01(\x04R\bmemberId\x124\n" +
-	"\x16peer_advertise_address\x18\x03 \x01(\tR\x14peerAdvertiseAddress\"d\n" +
+	"\x16peer_advertise_address\x18\x03 \x01(\tR\x14peerAdvertiseAddress\"\x83\x01\n" +
 	"\fClusterState\x12)\n" +
 	"\aelector\x18\x01 \x01(\v2\x0f.netsy.NodeInfoR\aelector\x12)\n" +
-	"\aprimary\x18\x02 \x01(\v2\x0f.netsy.NodeInfoR\aprimary*^\n" +
+	"\aprimary\x18\x02 \x01(\v2\x0f.netsy.NodeInfoR\aprimary\x12\x1d\n" +
+	"\n" +
+	"node_count\x18\x03 \x01(\x05R\tnodeCount*^\n" +
 	"\vHealthState\x12\x12\n" +
 	"\x0eHEALTH_UNKNOWN\x10\x00\x12\x12\n" +
 	"\x0eHEALTH_LOADING\x10\x01\x12\x12\n" +

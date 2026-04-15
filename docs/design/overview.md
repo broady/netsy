@@ -32,11 +32,13 @@ description: "Overview of Netsy terminology, requirements, leader election, and 
 
 ## Cluster State
 
-There are two components referred to as the "Cluster State" communicated to all Nodes:
+There are three components referred to as the "Cluster State" communicated to all Nodes:
 
 - Current `Elector` Node
 
 - Current `Primary` Node
+
+- The total `Node Count` / number of registered Nodes, used for majority quorum calculation
 
 ## Node States
 

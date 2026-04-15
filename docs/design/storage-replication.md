@@ -55,7 +55,9 @@ To determine which to follow for any given transaction, the Netsy Primary keeps 
 2. Parse request, assign revision
 3. Begin SQLite transaction
 4. Insert record into SQLite (not committed)
-5. Send record to all connected healthy Replicas
+5. Send record to all connected Replicas
+    - this includes Loading or Degraded Replicas — all benefit from receiving live records to stay current.
+    - only Receipts from healthy, previously-receipted Replicas count toward quorum.
 6. Wait for >= quorum threshold durable Receipts (with timeout, e.g. 1s).
     - note: "durable Receipt" means the Replica has committed the record to its own SQLite database (with `synchronous=FULL`, ensuring fsync to disk) before sending the Receipt. See [Requirements](overview.md#requirements) for SQLite durability configuration.
 7. Quorum threshold Receipts received:
@@ -66,7 +68,9 @@ To determine which to follow for any given transaction, the Netsy Primary keeps 
     - Send updated `committed_revision` to Replicas as a logical Commit message on the replication stream (before responding to the client, so Replicas can serve the record immediately upon client read-after-write)
     - Respond to client
 8. Timeout / insufficient Receipts:
-    - Mark timed-out Replicas as unhealthy
+    - Mark timed-out Replicas as `Degraded`
+    - a Replica that misses the quorum receipt deadline is considered not healthy enough for quorum at the configured latency budget, even if it is still sending Heartbeats
+    - recovery can therefore be quick for a Replica that is otherwise healthy: if the Heartbeat cadence/degradation threshold is longer than the quorum timeout, the next successful Heartbeat or Receipt can restore the Replica before heartbeat-based degradation would have fired on its own
     - Rollback SQLite transaction (the failed record is discarded and will not be included in any subsequent object storage flush)
     - `committed_revision` is NOT advanced — Replicas that stored this record treat it as tentative and will not serve it to clients
     - Immediately trigger buffer flush to object storage of any previously buffered records (separate goroutine)
@@ -109,5 +113,9 @@ The Primary holds a map of the Health State of each Replica and when it last suc
 Each entry for a Replica in this map uses atomic fields, so their data can be updated independently without locks. And when a new transaction needs to be written, the Primary can iterate through the list to determine whether or not there are enough healthy replicas.
 
 A Replica that reports a `Degraded` Health State (e.g. because it can no longer reach the Elector) will not be counted as healthy for quorum. This is critical for partition safety: a Replica that self-degrades due to Elector connectivity loss causes the Primary to fall back to synchronous object storage writes, ensuring all committed data is durably in object storage before a response is sent to the client.
+
+Likewise, a Replica that misses a quorum receipt timeout is immediately considered `Degraded` by the Primary, because `Healthy` for quorum means both reachable and able to durably Receipt within the configured quorum timeout.
+
+This immediate degradation is intentionally more aggressive than heartbeat-based degradation. When the heartbeat window (`replication.heartbeat_interval` × `replication.degradation_count`) is longer than the quorum timeout, a slow Replica can be excluded from quorum immediately so the client's retry uses Path 1, then quickly return to `Healthy` on a subsequent Heartbeat or Receipt.
 
 For additional safety, a Primary will not count a Replica as healthy for quorum transactions until it has successfully receipted at least once. This protects against cases where a new Replica could have a bug or issue in its code preventing successful transactions from being committed to disk.

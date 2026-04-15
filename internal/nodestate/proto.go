@@ -98,6 +98,7 @@ func ClusterStateToProto(cs ClusterState) *proto.ClusterState {
 			MemberId:             cs.Elector.MemberID,
 			PeerAdvertiseAddress: cs.Elector.PeerAdvertiseAddr,
 		},
+		NodeCount: int32(cs.NodeCount),
 	}
 	if cs.Primary.NodeID != "" {
 		result.Primary = &proto.NodeInfo{
@@ -119,6 +120,7 @@ func ClusterStateFromProto(cs *proto.ClusterState) ClusterState {
 			MemberID:          cs.GetElector().GetMemberId(),
 			PeerAdvertiseAddr: cs.GetElector().GetPeerAdvertiseAddress(),
 		},
+		NodeCount: int(cs.GetNodeCount()),
 	}
 	if cs.GetPrimary() != nil {
 		result.Primary = NodeInfo{

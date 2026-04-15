@@ -319,10 +319,14 @@ func (f *Follower) handleInitial(initial *proto.Initial) error {
 
 // handleRecord persists a replicated record to the local database,
 // enqueues the revision for watch delivery, and sends a receipt with
-// an embedded heartbeat back to the Primary.
+// an embedded heartbeat back to the Primary. Records above the current
+// committed revision are treated as tentative and can be overwritten if
+// the Primary retries with a different record at the same revision
+// (same-revision retry after quorum rollback).
 func (f *Follower) handleRecord(stream proto.Primary_FollowClient, record *proto.Record) error {
-	// ReplicateRecord sets replicated_at on the record.
-	if _, err := f.db.ReplicateRecord(record); err != nil {
+	// ReplicateTentativeRecord allows overwriting tentative records above
+	// committed_revision while preserving strict idempotency for committed ones.
+	if _, err := f.db.ReplicateTentativeRecord(record, f.state.Committed()); err != nil {
 		f.logger.Error("failed to replicate record", "revision", record.GetRevision(), "error", err)
 		return err
 	}

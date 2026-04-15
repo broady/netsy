@@ -56,4 +56,5 @@ message NodeInfo {
 message ClusterState {
   NodeInfo elector = 1;
   NodeInfo primary = 2; // empty if no Primary elected
+  int32 node_count = 3; // total registered Nodes for quorum calculation
 }
