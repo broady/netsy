@@ -69,7 +69,7 @@ func NewWatcher(ws pb.Watch_WatchServer) *Watcher {
 		id:       atomic.AddInt64(&watcherIDCounter, 1),
 		client:   ws,
 		inboxOk:  true,
-		inboxCh:  make(chan pb.WatchResponse), // TODO: use a buffered channel?
+		inboxCh:  make(chan pb.WatchResponse, 64),
 		watches:  map[int64]watchEntry{},
 		progress: map[int64]bool{},
 	}
@@ -116,12 +116,37 @@ func (w *Watcher) Cleanup(m *Manager, logger *slog.Logger) {
 	m.Unregister(w.id)
 }
 
-// CreateWatch handles watch create requests.
-func (w *Watcher) CreateWatch(r *pb.WatchCreateRequest, latestRevision int64, getRevision func(findRevision int64) (revision int64, compacted bool, compactedAt sql.NullString, err error), logger *slog.Logger) {
+// CreateWatch handles watch create requests. The compactionRevision
+// parameter gates admission: any request for a startRevision below the
+// current compaction floor is rejected immediately.
+func (w *Watcher) CreateWatch(r *pb.WatchCreateRequest, latestRevision int64, compactionRevision int64, getRevision func(findRevision int64) (revision int64, compacted bool, compactedAt sql.NullString, err error), logger *slog.Logger) {
 	logger.Debug("create watch", "watcher_id", w.id)
 
 	respHeader := &pb.ResponseHeader{
 		Revision: latestRevision,
+	}
+
+	// Reject watches requesting a revision below the compaction floor.
+	if r.StartRevision > 0 && compactionRevision > 0 && r.StartRevision <= compactionRevision {
+		watchID := atomic.AddInt64(&watchIDCounter, 1)
+		cancelReason := fmt.Sprintf("required revision %d has been compacted; compaction revision is %d", r.StartRevision, compactionRevision)
+		logger.Debug("create watch rejected by compaction floor",
+			"start_revision", r.StartRevision,
+			"compaction_revision", compactionRevision,
+		)
+		_ = w.client.Send(&pb.WatchResponse{
+			Header:  respHeader,
+			Created: true,
+			WatchId: watchID,
+		})
+		_ = w.client.Send(&pb.WatchResponse{
+			Header:          respHeader,
+			Canceled:        true,
+			CancelReason:    cancelReason,
+			CompactRevision: compactionRevision,
+			WatchId:         watchID,
+		})
+		return
 	}
 
 	// do not support user-provided watch IDs

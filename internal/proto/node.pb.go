@@ -174,11 +174,11 @@ const file_proto_node_proto_rawDesc = "" +
 	"\x10CompactionNotice\x12/\n" +
 	"\x13compaction_revision\x18\x01 \x01(\x03R\x12compactionRevision\"8\n" +
 	"\x18CompactionNoticeResponse\x12\x1c\n" +
-	"\tconfirmed\x18\x01 \x01(\bR\tconfirmed2\xa9\x02\n" +
+	"\tconfirmed\x18\x01 \x01(\bR\tconfirmed2\xa3\x02\n" +
 	"\x04Node\x12?\n" +
 	"\x10PushClusterState\x12\x13.netsy.ClusterState\x1a\x16.google.protobuf.Empty\x128\n" +
-	"\fGetNodeState\x12\x16.google.protobuf.Empty\x1a\x10.netsy.NodeState\x12T\n" +
-	"\x19GetGlobalMinWatchRevision\x12\x16.google.protobuf.Empty\x1a\x1f.netsy.MinWatchRevisionResponse\x12P\n" +
+	"\fGetNodeState\x12\x16.google.protobuf.Empty\x1a\x10.netsy.NodeState\x12N\n" +
+	"\x13GetMinWatchRevision\x12\x16.google.protobuf.Empty\x1a\x1f.netsy.MinWatchRevisionResponse\x12P\n" +
 	"\x14SendCompactionNotice\x12\x17.netsy.CompactionNotice\x1a\x1f.netsy.CompactionNoticeResponseB-Z+github.com/nadrama-com/netsy/internal/protob\x06proto3"
 
 var (
@@ -205,11 +205,11 @@ var file_proto_node_proto_goTypes = []any{
 var file_proto_node_proto_depIdxs = []int32{
 	3, // 0: netsy.Node.PushClusterState:input_type -> netsy.ClusterState
 	4, // 1: netsy.Node.GetNodeState:input_type -> google.protobuf.Empty
-	4, // 2: netsy.Node.GetGlobalMinWatchRevision:input_type -> google.protobuf.Empty
+	4, // 2: netsy.Node.GetMinWatchRevision:input_type -> google.protobuf.Empty
 	1, // 3: netsy.Node.SendCompactionNotice:input_type -> netsy.CompactionNotice
 	4, // 4: netsy.Node.PushClusterState:output_type -> google.protobuf.Empty
 	5, // 5: netsy.Node.GetNodeState:output_type -> netsy.NodeState
-	0, // 6: netsy.Node.GetGlobalMinWatchRevision:output_type -> netsy.MinWatchRevisionResponse
+	0, // 6: netsy.Node.GetMinWatchRevision:output_type -> netsy.MinWatchRevisionResponse
 	2, // 7: netsy.Node.SendCompactionNotice:output_type -> netsy.CompactionNoticeResponse
 	4, // [4:8] is the sub-list for method output_type
 	0, // [0:4] is the sub-list for method input_type

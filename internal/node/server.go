@@ -21,6 +21,12 @@ type RevisionSource interface {
 	LatestRevision() (int64, error)
 }
 
+// WatchRevisionSource provides the minimum watch revision across all
+// active watches on this node. Returns -1 when no watches are active.
+type WatchRevisionSource interface {
+	MinWatchRevision() int64
+}
+
 // Server implements the proto.NodeServer gRPC interface. It is hosted
 // by every Node and called by the Elector for cluster state pushes and
 // node state queries during Primary election.
@@ -33,6 +39,7 @@ type Server struct {
 	state     *nodestate.State
 	db        RevisionSource
 	peers     *peerclient.Manager
+	watches   WatchRevisionSource
 	guard     *ElectorGuard
 }
 
@@ -44,6 +51,7 @@ func NewServer(
 	state *nodestate.State,
 	db RevisionSource,
 	peers *peerclient.Manager,
+	watches WatchRevisionSource,
 ) *Server {
 	return &Server{
 		logger:    logger,
@@ -52,6 +60,7 @@ func NewServer(
 		state:     state,
 		db:        db,
 		peers:     peers,
+		watches:   watches,
 		guard:     NewElectorGuard(logger),
 	}
 }
@@ -103,4 +112,17 @@ func (s *Server) PushClusterState(ctx context.Context, req *proto.ClusterState) 
 	return &emptypb.Empty{}, nil
 }
 
+// GetMinWatchRevision returns the minimum revision across all active
+// watches on this node. If no watches are active, the current
+// committed revision is returned instead, indicating that this node
+// has no outstanding watchers/watches below that point.
+func (s *Server) GetMinWatchRevision(_ context.Context, _ *emptypb.Empty) (*proto.MinWatchRevisionResponse, error) {
+	minRev := s.watches.MinWatchRevision()
+	if minRev < 0 {
+		minRev = s.state.Committed()
+	}
 
+	return &proto.MinWatchRevisionResponse{
+		MinRevision: minRev,
+	}, nil
+}

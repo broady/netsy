@@ -212,6 +212,23 @@ func (m *Manager) GetNodeState(ctx context.Context, addr string) (*proto.NodeSta
 	return client.GetNodeState(ctx, &emptypb.Empty{})
 }
 
+// GetMinWatchRevision calls GetMinWatchRevision on a remote node.
+// Returns the minimum revision across all active watches on that node,
+// or committed revision if the node has no active watches.
+func (m *Manager) GetMinWatchRevision(ctx context.Context, addr string) (int64, error) {
+	client, conn, err := m.dialNode(addr)
+	if err != nil {
+		return 0, err
+	}
+	defer conn.Close()
+
+	resp, err := client.GetMinWatchRevision(ctx, &emptypb.Empty{})
+	if err != nil {
+		return 0, err
+	}
+	return resp.GetMinRevision(), nil
+}
+
 // PushClusterStateTo pushes the given cluster state to a remote node.
 func (m *Manager) PushClusterStateTo(ctx context.Context, addr string, cs *proto.ClusterState) error {
 	client, conn, err := m.dialNode(addr)

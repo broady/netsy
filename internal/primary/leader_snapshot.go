@@ -7,17 +7,21 @@ import (
 	"time"
 )
 
-// checkAndCreateSnapshot checks if a snapshot should be created based on configured thresholds
-// and creates one asynchronously if needed. This should ideally only be called by the leader, since
-// we ideally want to create snapshots from the latest data.
+// checkAndCreateSnapshot checks if a snapshot should be created based on
+// configured thresholds and creates one asynchronously if needed. The
+// snapshot is gated on committed_revision so that only durably committed
+// records are included. This should only be called by the Primary.
 func (ps *Server) checkAndCreateSnapshot(currentRevision int64, recordSize int64) {
-	// Skip if snapshot worker is not available
 	if ps.snapshotWorker == nil {
 		return
 	}
 
-	currentTime := time.Now()
+	// Use committed revision as the snapshot ceiling to ensure only
+	// durably committed records are captured.
+	committedRevision := ps.state.Committed()
+	if committedRevision <= 0 {
+		return
+	}
 
-	// Send snapshot request to worker (non-blocking)
-	ps.snapshotWorker.RequestSnapshot(currentRevision, currentTime, recordSize)
+	ps.snapshotWorker.RequestSnapshot(committedRevision, time.Now(), recordSize)
 }

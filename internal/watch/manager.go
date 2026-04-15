@@ -185,6 +185,26 @@ func (m *Manager) AdvanceCommittedRevision(rev int64) {
 	}
 }
 
+// MinWatchRevision returns the lowest startRevision across all active
+// watches on this node. If no watches are active, it returns -1 to
+// signal the caller should fall back to committed revision.
+func (m *Manager) MinWatchRevision() int64 {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	var minRev int64 = -1
+	for _, w := range m.watchers {
+		w.RLock()
+		for _, entry := range w.watches {
+			if minRev < 0 || entry.startRevision < minRev {
+				minRev = entry.startRevision
+			}
+		}
+		w.RUnlock()
+	}
+	return minRev
+}
+
 // distributeFromDB reads a record from SQLite by revision and delivers
 // it to matching watchers, including the previous record for watches
 // that request prev_kv.

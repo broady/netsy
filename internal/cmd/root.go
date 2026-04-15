@@ -197,6 +197,17 @@ func NewRootCmd() *cobra.Command {
 		snapshotWorker := snapshot.NewWorker(filteredLogger, c, db, storageClient)
 		defer snapshotWorker.Stop()
 
+		// Create peer manager for outbound connections. Constructed before the
+		// Primary server because the compaction scheduler dials each node's
+		// Node service to query minimum watch revisions.
+		peerManager := peerclient.NewManager(
+			filteredLogger.With("component", "peer-manager"),
+			c.NodeID,
+			tlsConfigPeerClient,
+			state,
+		)
+		defer peerManager.Close()
+
 		// Construct the Primary server before bootstrap so the same instance can
 		// be wired into peer/client services now and activated later on election.
 		primarySrv, err := primary.NewServer(
@@ -206,6 +217,7 @@ func NewRootCmd() *cobra.Command {
 			snapshotWorker,
 			storageClient,
 			state,
+			peerManager,
 			c.Replication.HeartbeatInterval.Duration,
 			c.Replication.DegradationCount,
 		)
@@ -213,15 +225,6 @@ func NewRootCmd() *cobra.Command {
 			filteredLogger.Error("Failed to create primary server", "error", err)
 			os.Exit(1)
 		}
-
-		// Create peer manager for outbound connections
-		peerManager := peerclient.NewManager(
-			filteredLogger.With("component", "peer-manager"),
-			c.NodeID,
-			tlsConfigPeerClient,
-			state,
-		)
-		defer peerManager.Close()
 
 		// Start elector — s3lect election, health server, and elector service.
 		// Created after DB and peer manager so all election dependencies are
@@ -358,6 +361,7 @@ func NewRootCmd() *cobra.Command {
 			state,
 			db,
 			peerManager,
+			watchManager,
 		)
 
 		// Setup and run Peer gRPC server (Elector, Primary, and Node services)

@@ -23,10 +23,10 @@ import (
 const _ = grpc.SupportPackageIsVersion9
 
 const (
-	Node_PushClusterState_FullMethodName          = "/netsy.Node/PushClusterState"
-	Node_GetNodeState_FullMethodName              = "/netsy.Node/GetNodeState"
-	Node_GetGlobalMinWatchRevision_FullMethodName = "/netsy.Node/GetGlobalMinWatchRevision"
-	Node_SendCompactionNotice_FullMethodName      = "/netsy.Node/SendCompactionNotice"
+	Node_PushClusterState_FullMethodName     = "/netsy.Node/PushClusterState"
+	Node_GetNodeState_FullMethodName         = "/netsy.Node/GetNodeState"
+	Node_GetMinWatchRevision_FullMethodName  = "/netsy.Node/GetMinWatchRevision"
+	Node_SendCompactionNotice_FullMethodName = "/netsy.Node/SendCompactionNotice"
 )
 
 // NodeClient is the client API for Node service.
@@ -38,7 +38,7 @@ const (
 type NodeClient interface {
 	PushClusterState(ctx context.Context, in *ClusterState, opts ...grpc.CallOption) (*emptypb.Empty, error)
 	GetNodeState(ctx context.Context, in *emptypb.Empty, opts ...grpc.CallOption) (*NodeState, error)
-	GetGlobalMinWatchRevision(ctx context.Context, in *emptypb.Empty, opts ...grpc.CallOption) (*MinWatchRevisionResponse, error)
+	GetMinWatchRevision(ctx context.Context, in *emptypb.Empty, opts ...grpc.CallOption) (*MinWatchRevisionResponse, error)
 	SendCompactionNotice(ctx context.Context, in *CompactionNotice, opts ...grpc.CallOption) (*CompactionNoticeResponse, error)
 }
 
@@ -70,10 +70,10 @@ func (c *nodeClient) GetNodeState(ctx context.Context, in *emptypb.Empty, opts .
 	return out, nil
 }
 
-func (c *nodeClient) GetGlobalMinWatchRevision(ctx context.Context, in *emptypb.Empty, opts ...grpc.CallOption) (*MinWatchRevisionResponse, error) {
+func (c *nodeClient) GetMinWatchRevision(ctx context.Context, in *emptypb.Empty, opts ...grpc.CallOption) (*MinWatchRevisionResponse, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(MinWatchRevisionResponse)
-	err := c.cc.Invoke(ctx, Node_GetGlobalMinWatchRevision_FullMethodName, in, out, cOpts...)
+	err := c.cc.Invoke(ctx, Node_GetMinWatchRevision_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -99,7 +99,7 @@ func (c *nodeClient) SendCompactionNotice(ctx context.Context, in *CompactionNot
 type NodeServer interface {
 	PushClusterState(context.Context, *ClusterState) (*emptypb.Empty, error)
 	GetNodeState(context.Context, *emptypb.Empty) (*NodeState, error)
-	GetGlobalMinWatchRevision(context.Context, *emptypb.Empty) (*MinWatchRevisionResponse, error)
+	GetMinWatchRevision(context.Context, *emptypb.Empty) (*MinWatchRevisionResponse, error)
 	SendCompactionNotice(context.Context, *CompactionNotice) (*CompactionNoticeResponse, error)
 	mustEmbedUnimplementedNodeServer()
 }
@@ -117,8 +117,8 @@ func (UnimplementedNodeServer) PushClusterState(context.Context, *ClusterState) 
 func (UnimplementedNodeServer) GetNodeState(context.Context, *emptypb.Empty) (*NodeState, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method GetNodeState not implemented")
 }
-func (UnimplementedNodeServer) GetGlobalMinWatchRevision(context.Context, *emptypb.Empty) (*MinWatchRevisionResponse, error) {
-	return nil, status.Errorf(codes.Unimplemented, "method GetGlobalMinWatchRevision not implemented")
+func (UnimplementedNodeServer) GetMinWatchRevision(context.Context, *emptypb.Empty) (*MinWatchRevisionResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method GetMinWatchRevision not implemented")
 }
 func (UnimplementedNodeServer) SendCompactionNotice(context.Context, *CompactionNotice) (*CompactionNoticeResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method SendCompactionNotice not implemented")
@@ -180,20 +180,20 @@ func _Node_GetNodeState_Handler(srv interface{}, ctx context.Context, dec func(i
 	return interceptor(ctx, in, info, handler)
 }
 
-func _Node_GetGlobalMinWatchRevision_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+func _Node_GetMinWatchRevision_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(emptypb.Empty)
 	if err := dec(in); err != nil {
 		return nil, err
 	}
 	if interceptor == nil {
-		return srv.(NodeServer).GetGlobalMinWatchRevision(ctx, in)
+		return srv.(NodeServer).GetMinWatchRevision(ctx, in)
 	}
 	info := &grpc.UnaryServerInfo{
 		Server:     srv,
-		FullMethod: Node_GetGlobalMinWatchRevision_FullMethodName,
+		FullMethod: Node_GetMinWatchRevision_FullMethodName,
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(NodeServer).GetGlobalMinWatchRevision(ctx, req.(*emptypb.Empty))
+		return srv.(NodeServer).GetMinWatchRevision(ctx, req.(*emptypb.Empty))
 	}
 	return interceptor(ctx, in, info, handler)
 }
@@ -232,8 +232,8 @@ var Node_ServiceDesc = grpc.ServiceDesc{
 			Handler:    _Node_GetNodeState_Handler,
 		},
 		{
-			MethodName: "GetGlobalMinWatchRevision",
-			Handler:    _Node_GetGlobalMinWatchRevision_Handler,
+			MethodName: "GetMinWatchRevision",
+			Handler:    _Node_GetMinWatchRevision_Handler,
 		},
 		{
 			MethodName: "SendCompactionNotice",

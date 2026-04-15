@@ -19,6 +19,7 @@ import (
 	"github.com/nadrama-com/netsy/internal/config"
 	"github.com/nadrama-com/netsy/internal/localdb"
 	"github.com/nadrama-com/netsy/internal/nodestate"
+	"github.com/nadrama-com/netsy/internal/peerclient"
 	"github.com/nadrama-com/netsy/internal/proto"
 	"github.com/nadrama-com/netsy/internal/snapshot"
 	"github.com/nadrama-com/netsy/internal/storage"
@@ -36,6 +37,7 @@ type Server struct {
 	storageClient  storage.ObjectStorage
 	snapshotWorker *snapshot.Worker
 	state          *nodestate.State
+	peerClients    *peerclient.Manager
 	replicas       *Replicas
 	followMu       sync.RWMutex
 	followStreams  map[string]*followSession
@@ -77,6 +79,7 @@ func NewServer(
 	snapshotWorker *snapshot.Worker,
 	storageClient storage.ObjectStorage,
 	state *nodestate.State,
+	peerClients *peerclient.Manager,
 	heartbeatInterval time.Duration,
 	degradationCount int,
 ) (*Server, error) {
@@ -87,6 +90,7 @@ func NewServer(
 		storageClient:  storageClient,
 		snapshotWorker: snapshotWorker,
 		state:          state,
+		peerClients:    peerClients,
 		replicas:       NewReplicas(),
 		followStreams:  make(map[string]*followSession),
 		chunkBuffer: newChunkBuffer(
@@ -124,6 +128,7 @@ func (s *Server) StartServices(parent context.Context) {
 
 	go s.RunDegradationLoop(ctx)
 	go s.chunkBuffer.Run(ctx)
+	go s.RunCompactionScheduler(ctx)
 	s.startPreflightLocked(ctx)
 	s.logger.Info("primary services started")
 }

@@ -24,6 +24,14 @@ func (m *mockRevisionSource) LatestRevision() (int64, error) {
 	return m.revision, m.err
 }
 
+type mockWatchRevisionSource struct {
+	minRevision int64
+}
+
+func (m *mockWatchRevisionSource) MinWatchRevision() int64 {
+	return m.minRevision
+}
+
 func newTestServer(revision int64) *Server {
 	state := nodestate.New(slog.Default())
 	_ = state.SetHealth(nodestate.HealthHealthy)
@@ -37,6 +45,7 @@ func newTestServer(revision int64) *Server {
 		state,
 		&mockRevisionSource{revision: revision},
 		mgr,
+		&mockWatchRevisionSource{minRevision: -1},
 	)
 }
 
@@ -65,6 +74,58 @@ func TestGetNodeState(t *testing.T) {
 	}
 	if resp.GetElectorState() != proto.ElectorState_ELECTOR_FOLLOWER {
 		t.Fatalf("expected follower, got %v", resp.GetElectorState())
+	}
+}
+
+func TestGetMinWatchRevisionWithActiveWatches(t *testing.T) {
+	state := nodestate.New(slog.Default())
+	_ = state.SetHealth(nodestate.HealthHealthy)
+	state.SetCommitted(100)
+
+	mgr := peerclient.NewManager(slog.Default(), "node-a", nil, state)
+
+	srv := NewServer(
+		slog.Default(),
+		"node-a",
+		1000,
+		state,
+		&mockRevisionSource{revision: 100},
+		mgr,
+		&mockWatchRevisionSource{minRevision: 50},
+	)
+
+	resp, err := srv.GetMinWatchRevision(context.Background(), &emptypb.Empty{})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if resp.GetMinRevision() != 50 {
+		t.Fatalf("expected min_revision 50, got %d", resp.GetMinRevision())
+	}
+}
+
+func TestGetMinWatchRevisionNoWatches(t *testing.T) {
+	state := nodestate.New(slog.Default())
+	_ = state.SetHealth(nodestate.HealthHealthy)
+	state.SetCommitted(100)
+
+	mgr := peerclient.NewManager(slog.Default(), "node-a", nil, state)
+
+	srv := NewServer(
+		slog.Default(),
+		"node-a",
+		1000,
+		state,
+		&mockRevisionSource{revision: 100},
+		mgr,
+		&mockWatchRevisionSource{minRevision: -1},
+	)
+
+	resp, err := srv.GetMinWatchRevision(context.Background(), &emptypb.Empty{})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if resp.GetMinRevision() != 100 {
+		t.Fatalf("expected min_revision 100 (committed_revision), got %d", resp.GetMinRevision())
 	}
 }
 

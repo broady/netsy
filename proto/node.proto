@@ -15,7 +15,7 @@ option go_package = "github.com/nadrama-com/netsy/internal/proto";
 service Node {
   rpc PushClusterState(ClusterState) returns (google.protobuf.Empty);
   rpc GetNodeState(google.protobuf.Empty) returns (NodeState);
-  rpc GetGlobalMinWatchRevision(google.protobuf.Empty) returns (MinWatchRevisionResponse);
+  rpc GetMinWatchRevision(google.protobuf.Empty) returns (MinWatchRevisionResponse);
   rpc SendCompactionNotice(CompactionNotice) returns (CompactionNoticeResponse);
 }
 
