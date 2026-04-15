@@ -37,6 +37,7 @@ type Database interface {
 	ReplicateRecord(record *proto.Record) (*proto.Record, error)
 	ReplicateTentativeRecord(record *proto.Record, committedRevision int64) (*proto.Record, error)
 	Size() (int64, error)
+	SizeInUse() (int64, error)
 	Close() error
 }
 
@@ -122,6 +123,16 @@ func (db *database) Size() (int64, error) {
 		return 0, err
 	}
 	return dbSize, nil
+}
+
+// SizeInUse returns the size of the database excluding free pages.
+func (db *database) SizeInUse() (int64, error) {
+	const query = "SELECT ((page_count - freelist_count) * page_size) FROM pragma_page_count(), pragma_freelist_count(), pragma_page_size();"
+	var size int64
+	if err := db.conn.QueryRow(query).Scan(&size); err != nil {
+		return 0, err
+	}
+	return size, nil
 }
 
 func (db *database) Close() error {

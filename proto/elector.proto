@@ -17,6 +17,7 @@ service Elector {
   rpc DeregisterNode(DeregisterNodeRequest) returns (google.protobuf.Empty);
   rpc GetClusterState(google.protobuf.Empty) returns (ClusterState);
   rpc SendHeartbeat(NodeState) returns (google.protobuf.Empty);
+  rpc GetMemberList(GetMemberListRequest) returns (GetMemberListResponse);
 }
 
 // RegisterNodeRequest is sent by a Node to the Elector during startup
@@ -39,4 +40,23 @@ message RegisterNodeResponse {
 // shutdown or by the Elector itself after a deregistration timeout.
 message DeregisterNodeRequest {
   string node_id = 1;
+}
+
+// GetMemberListRequest requests the current cluster member list from the
+// Elector. The request carries no parameters; the Elector responds with
+// all registered nodes.
+message GetMemberListRequest {}
+
+// GetMemberListResponse returns all registered cluster members with their
+// stable etcd member IDs and advertise addresses.
+message GetMemberListResponse {
+  repeated MemberEntry members = 1;
+}
+
+// MemberEntry represents a single registered node in the cluster member list.
+message MemberEntry {
+  string node_id = 1;
+  uint64 member_id = 2;
+  string client_advertise_address = 3;
+  string peer_advertise_address = 4;
 }

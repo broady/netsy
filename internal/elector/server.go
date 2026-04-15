@@ -197,6 +197,31 @@ func (s *Server) requireLeader() error {
 	return nil
 }
 
+// GetMemberList returns all registered nodes from the Elector's in-memory
+// node map. Only callable when this node is the Elector leader and the
+// node map bootstrap has completed.
+func (s *Server) GetMemberList(_ context.Context, _ *proto.GetMemberListRequest) (*proto.GetMemberListResponse, error) {
+	if err := s.requireLeader(); err != nil {
+		return nil, err
+	}
+	if !s.nodeMap.Ready() {
+		return nil, status.Error(codes.Unavailable, "elector is still bootstrapping")
+	}
+
+	entries := s.nodeMap.All()
+	members := make([]*proto.MemberEntry, 0, len(entries))
+	for _, e := range entries {
+		members = append(members, &proto.MemberEntry{
+			NodeId:                 e.NodeID,
+			MemberId:               e.MemberID,
+			ClientAdvertiseAddress: e.ClientAdvertiseAddress,
+			PeerAdvertiseAddress:   e.PeerAdvertiseAddress,
+		})
+	}
+
+	return &proto.GetMemberListResponse{Members: members}, nil
+}
+
 // allocateOrReuseMemberID reads members.json, reuses an existing member_id
 // for the node if present, or allocates a new one. The updated members.json
 // is written back with a conditional write and retried on precondition failure.

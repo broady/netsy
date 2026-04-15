@@ -5,6 +5,7 @@ package config
 
 import (
 	"fmt"
+	"hash/fnv"
 )
 
 // Config combines per-node settings (from env vars) and per-cluster settings
@@ -12,6 +13,10 @@ import (
 type Config struct {
 	NodeConfig
 	ClusterConfig
+
+	// EtcdClusterID is a stable FNV-1a 64-bit hash of the string ClusterID,
+	// computed once at load time for use in etcd ResponseHeader.ClusterId.
+	EtcdClusterID uint64
 }
 
 // FlagOverrides holds CLI flag values that override env-var defaults.
@@ -46,7 +51,16 @@ func Load(flags FlagOverrides) (*Config, error) {
 	if err := c.Validate(); err != nil {
 		return nil, fmt.Errorf("invalid config: %w", err)
 	}
+	c.EtcdClusterID = hashClusterID(c.ClusterID)
 	return c, nil
+}
+
+// hashClusterID returns a stable FNV-1a 64-bit hash of the cluster ID string
+// for use as the etcd-compatible numeric cluster identifier in ResponseHeader.
+func hashClusterID(clusterID string) uint64 {
+	h := fnv.New64a()
+	h.Write([]byte(clusterID))
+	return h.Sum64()
 }
 
 // ValidateFile loads and validates a config file without starting the server.

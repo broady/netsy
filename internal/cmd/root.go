@@ -223,6 +223,25 @@ func NewRootCmd() *cobra.Command {
 		)
 		defer peerManager.Close()
 
+		// Start elector — s3lect election, health server, and elector service.
+		// Created after DB and peer manager so all election dependencies are
+		// available at construction time, and before the client API server so
+		// the Elector server can be wired in as the local member lister.
+		electionRunner, err := elector.New(
+			filteredLogger, c, state, storageClient, tlsFiles.ServerCert,
+			startTime, db, peerManager,
+		)
+		if err != nil {
+			filteredLogger.Error("Failed to create election runner", "error", err)
+			jitterWaitThenExit(filteredLogger)
+		}
+		if err := electionRunner.Start(ctx); err != nil {
+			filteredLogger.Error("Failed to start election runner", "error", err)
+			jitterWaitThenExit(filteredLogger)
+		}
+		defer electionRunner.Stop(ctx)
+		filteredLogger.Info("starting election (https) server...", "addr", c.BindElection)
+
 		// Construct the client API server before bootstrap so its watch
 		// notifier can be used by the replication follower, but do not
 		// start serving client traffic until bootstrap completes.
@@ -239,25 +258,7 @@ func NewRootCmd() *cobra.Command {
 		gopts = append(gopts, grpc.Creds(credentials.NewTLS(tlsConfigClientAPI)))
 		grpcServer := grpc.NewServer(gopts...)
 		watchManager := watch.NewManager(filteredLogger.With("component", "watch"), db)
-		clientApiServer := clientapi.NewServer(filteredLogger, c, db, grpcServer, primarySrv, peerManager, watchManager, state)
-
-		// Start elector — s3lect election, health server, and elector service.
-		// Created after DB and peer manager so all election dependencies are
-		// available at construction time.
-		electionRunner, err := elector.New(
-			filteredLogger, c, state, storageClient, tlsFiles.ServerCert,
-			startTime, db, peerManager,
-		)
-		if err != nil {
-			filteredLogger.Error("Failed to create election runner", "error", err)
-			jitterWaitThenExit(filteredLogger)
-		}
-		if err := electionRunner.Start(ctx); err != nil {
-			filteredLogger.Error("Failed to start election runner", "error", err)
-			jitterWaitThenExit(filteredLogger)
-		}
-		defer electionRunner.Stop(ctx)
-		filteredLogger.Info("starting election (https) server...", "addr", c.BindElection)
+		clientApiServer := clientapi.NewServer(filteredLogger, c, db, grpcServer, primarySrv, peerManager, watchManager, state, electionRunner.ElectorServer())
 
 		// Wait for first election cycle to know the current Elector
 		electionStatus, err := electionRunner.WaitForFirstElection(ctx)

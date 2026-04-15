@@ -27,6 +27,7 @@ const (
 	Elector_DeregisterNode_FullMethodName  = "/netsy.Elector/DeregisterNode"
 	Elector_GetClusterState_FullMethodName = "/netsy.Elector/GetClusterState"
 	Elector_SendHeartbeat_FullMethodName   = "/netsy.Elector/SendHeartbeat"
+	Elector_GetMemberList_FullMethodName   = "/netsy.Elector/GetMemberList"
 )
 
 // ElectorClient is the client API for Elector service.
@@ -40,6 +41,7 @@ type ElectorClient interface {
 	DeregisterNode(ctx context.Context, in *DeregisterNodeRequest, opts ...grpc.CallOption) (*emptypb.Empty, error)
 	GetClusterState(ctx context.Context, in *emptypb.Empty, opts ...grpc.CallOption) (*ClusterState, error)
 	SendHeartbeat(ctx context.Context, in *NodeState, opts ...grpc.CallOption) (*emptypb.Empty, error)
+	GetMemberList(ctx context.Context, in *GetMemberListRequest, opts ...grpc.CallOption) (*GetMemberListResponse, error)
 }
 
 type electorClient struct {
@@ -90,6 +92,16 @@ func (c *electorClient) SendHeartbeat(ctx context.Context, in *NodeState, opts .
 	return out, nil
 }
 
+func (c *electorClient) GetMemberList(ctx context.Context, in *GetMemberListRequest, opts ...grpc.CallOption) (*GetMemberListResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(GetMemberListResponse)
+	err := c.cc.Invoke(ctx, Elector_GetMemberList_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // ElectorServer is the server API for Elector service.
 // All implementations must embed UnimplementedElectorServer
 // for forward compatibility.
@@ -101,6 +113,7 @@ type ElectorServer interface {
 	DeregisterNode(context.Context, *DeregisterNodeRequest) (*emptypb.Empty, error)
 	GetClusterState(context.Context, *emptypb.Empty) (*ClusterState, error)
 	SendHeartbeat(context.Context, *NodeState) (*emptypb.Empty, error)
+	GetMemberList(context.Context, *GetMemberListRequest) (*GetMemberListResponse, error)
 	mustEmbedUnimplementedElectorServer()
 }
 
@@ -122,6 +135,9 @@ func (UnimplementedElectorServer) GetClusterState(context.Context, *emptypb.Empt
 }
 func (UnimplementedElectorServer) SendHeartbeat(context.Context, *NodeState) (*emptypb.Empty, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method SendHeartbeat not implemented")
+}
+func (UnimplementedElectorServer) GetMemberList(context.Context, *GetMemberListRequest) (*GetMemberListResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method GetMemberList not implemented")
 }
 func (UnimplementedElectorServer) mustEmbedUnimplementedElectorServer() {}
 func (UnimplementedElectorServer) testEmbeddedByValue()                 {}
@@ -216,6 +232,24 @@ func _Elector_SendHeartbeat_Handler(srv interface{}, ctx context.Context, dec fu
 	return interceptor(ctx, in, info, handler)
 }
 
+func _Elector_GetMemberList_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(GetMemberListRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(ElectorServer).GetMemberList(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Elector_GetMemberList_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(ElectorServer).GetMemberList(ctx, req.(*GetMemberListRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // Elector_ServiceDesc is the grpc.ServiceDesc for Elector service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -238,6 +272,10 @@ var Elector_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "SendHeartbeat",
 			Handler:    _Elector_SendHeartbeat_Handler,
+		},
+		{
+			MethodName: "GetMemberList",
+			Handler:    _Elector_GetMemberList_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},

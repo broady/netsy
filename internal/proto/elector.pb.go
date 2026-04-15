@@ -188,6 +188,160 @@ func (x *DeregisterNodeRequest) GetNodeId() string {
 	return ""
 }
 
+// GetMemberListRequest requests the current cluster member list from the
+// Elector. The request carries no parameters; the Elector responds with
+// all registered nodes.
+type GetMemberListRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *GetMemberListRequest) Reset() {
+	*x = GetMemberListRequest{}
+	mi := &file_proto_elector_proto_msgTypes[3]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *GetMemberListRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*GetMemberListRequest) ProtoMessage() {}
+
+func (x *GetMemberListRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_proto_elector_proto_msgTypes[3]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use GetMemberListRequest.ProtoReflect.Descriptor instead.
+func (*GetMemberListRequest) Descriptor() ([]byte, []int) {
+	return file_proto_elector_proto_rawDescGZIP(), []int{3}
+}
+
+// GetMemberListResponse returns all registered cluster members with their
+// stable etcd member IDs and advertise addresses.
+type GetMemberListResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Members       []*MemberEntry         `protobuf:"bytes,1,rep,name=members,proto3" json:"members,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *GetMemberListResponse) Reset() {
+	*x = GetMemberListResponse{}
+	mi := &file_proto_elector_proto_msgTypes[4]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *GetMemberListResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*GetMemberListResponse) ProtoMessage() {}
+
+func (x *GetMemberListResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_proto_elector_proto_msgTypes[4]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use GetMemberListResponse.ProtoReflect.Descriptor instead.
+func (*GetMemberListResponse) Descriptor() ([]byte, []int) {
+	return file_proto_elector_proto_rawDescGZIP(), []int{4}
+}
+
+func (x *GetMemberListResponse) GetMembers() []*MemberEntry {
+	if x != nil {
+		return x.Members
+	}
+	return nil
+}
+
+// MemberEntry represents a single registered node in the cluster member list.
+type MemberEntry struct {
+	state                  protoimpl.MessageState `protogen:"open.v1"`
+	NodeId                 string                 `protobuf:"bytes,1,opt,name=node_id,json=nodeId,proto3" json:"node_id,omitempty"`
+	MemberId               uint64                 `protobuf:"varint,2,opt,name=member_id,json=memberId,proto3" json:"member_id,omitempty"`
+	ClientAdvertiseAddress string                 `protobuf:"bytes,3,opt,name=client_advertise_address,json=clientAdvertiseAddress,proto3" json:"client_advertise_address,omitempty"`
+	PeerAdvertiseAddress   string                 `protobuf:"bytes,4,opt,name=peer_advertise_address,json=peerAdvertiseAddress,proto3" json:"peer_advertise_address,omitempty"`
+	unknownFields          protoimpl.UnknownFields
+	sizeCache              protoimpl.SizeCache
+}
+
+func (x *MemberEntry) Reset() {
+	*x = MemberEntry{}
+	mi := &file_proto_elector_proto_msgTypes[5]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *MemberEntry) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*MemberEntry) ProtoMessage() {}
+
+func (x *MemberEntry) ProtoReflect() protoreflect.Message {
+	mi := &file_proto_elector_proto_msgTypes[5]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use MemberEntry.ProtoReflect.Descriptor instead.
+func (*MemberEntry) Descriptor() ([]byte, []int) {
+	return file_proto_elector_proto_rawDescGZIP(), []int{5}
+}
+
+func (x *MemberEntry) GetNodeId() string {
+	if x != nil {
+		return x.NodeId
+	}
+	return ""
+}
+
+func (x *MemberEntry) GetMemberId() uint64 {
+	if x != nil {
+		return x.MemberId
+	}
+	return 0
+}
+
+func (x *MemberEntry) GetClientAdvertiseAddress() string {
+	if x != nil {
+		return x.ClientAdvertiseAddress
+	}
+	return ""
+}
+
+func (x *MemberEntry) GetPeerAdvertiseAddress() string {
+	if x != nil {
+		return x.PeerAdvertiseAddress
+	}
+	return ""
+}
+
 var File_proto_elector_proto protoreflect.FileDescriptor
 
 const file_proto_elector_proto_rawDesc = "" +
@@ -201,12 +355,21 @@ const file_proto_elector_proto_rawDesc = "" +
 	"\tmember_id\x18\x01 \x01(\x04R\bmemberId\x128\n" +
 	"\rcluster_state\x18\x02 \x01(\v2\x13.netsy.ClusterStateR\fclusterState\"0\n" +
 	"\x15DeregisterNodeRequest\x12\x17\n" +
-	"\anode_id\x18\x01 \x01(\tR\x06nodeId2\x95\x02\n" +
+	"\anode_id\x18\x01 \x01(\tR\x06nodeId\"\x16\n" +
+	"\x14GetMemberListRequest\"E\n" +
+	"\x15GetMemberListResponse\x12,\n" +
+	"\amembers\x18\x01 \x03(\v2\x12.netsy.MemberEntryR\amembers\"\xb3\x01\n" +
+	"\vMemberEntry\x12\x17\n" +
+	"\anode_id\x18\x01 \x01(\tR\x06nodeId\x12\x1b\n" +
+	"\tmember_id\x18\x02 \x01(\x04R\bmemberId\x128\n" +
+	"\x18client_advertise_address\x18\x03 \x01(\tR\x16clientAdvertiseAddress\x124\n" +
+	"\x16peer_advertise_address\x18\x04 \x01(\tR\x14peerAdvertiseAddress2\xe1\x02\n" +
 	"\aElector\x12G\n" +
 	"\fRegisterNode\x12\x1a.netsy.RegisterNodeRequest\x1a\x1b.netsy.RegisterNodeResponse\x12F\n" +
 	"\x0eDeregisterNode\x12\x1c.netsy.DeregisterNodeRequest\x1a\x16.google.protobuf.Empty\x12>\n" +
 	"\x0fGetClusterState\x12\x16.google.protobuf.Empty\x1a\x13.netsy.ClusterState\x129\n" +
-	"\rSendHeartbeat\x12\x10.netsy.NodeState\x1a\x16.google.protobuf.EmptyB-Z+github.com/nadrama-com/netsy/internal/protob\x06proto3"
+	"\rSendHeartbeat\x12\x10.netsy.NodeState\x1a\x16.google.protobuf.Empty\x12J\n" +
+	"\rGetMemberList\x12\x1b.netsy.GetMemberListRequest\x1a\x1c.netsy.GetMemberListResponseB-Z+github.com/nadrama-com/netsy/internal/protob\x06proto3"
 
 var (
 	file_proto_elector_proto_rawDescOnce sync.Once
@@ -220,30 +383,36 @@ func file_proto_elector_proto_rawDescGZIP() []byte {
 	return file_proto_elector_proto_rawDescData
 }
 
-var file_proto_elector_proto_msgTypes = make([]protoimpl.MessageInfo, 3)
+var file_proto_elector_proto_msgTypes = make([]protoimpl.MessageInfo, 6)
 var file_proto_elector_proto_goTypes = []any{
 	(*RegisterNodeRequest)(nil),   // 0: netsy.RegisterNodeRequest
 	(*RegisterNodeResponse)(nil),  // 1: netsy.RegisterNodeResponse
 	(*DeregisterNodeRequest)(nil), // 2: netsy.DeregisterNodeRequest
-	(*ClusterState)(nil),          // 3: netsy.ClusterState
-	(*emptypb.Empty)(nil),         // 4: google.protobuf.Empty
-	(*NodeState)(nil),             // 5: netsy.NodeState
+	(*GetMemberListRequest)(nil),  // 3: netsy.GetMemberListRequest
+	(*GetMemberListResponse)(nil), // 4: netsy.GetMemberListResponse
+	(*MemberEntry)(nil),           // 5: netsy.MemberEntry
+	(*ClusterState)(nil),          // 6: netsy.ClusterState
+	(*emptypb.Empty)(nil),         // 7: google.protobuf.Empty
+	(*NodeState)(nil),             // 8: netsy.NodeState
 }
 var file_proto_elector_proto_depIdxs = []int32{
-	3, // 0: netsy.RegisterNodeResponse.cluster_state:type_name -> netsy.ClusterState
-	0, // 1: netsy.Elector.RegisterNode:input_type -> netsy.RegisterNodeRequest
-	2, // 2: netsy.Elector.DeregisterNode:input_type -> netsy.DeregisterNodeRequest
-	4, // 3: netsy.Elector.GetClusterState:input_type -> google.protobuf.Empty
-	5, // 4: netsy.Elector.SendHeartbeat:input_type -> netsy.NodeState
-	1, // 5: netsy.Elector.RegisterNode:output_type -> netsy.RegisterNodeResponse
-	4, // 6: netsy.Elector.DeregisterNode:output_type -> google.protobuf.Empty
-	3, // 7: netsy.Elector.GetClusterState:output_type -> netsy.ClusterState
-	4, // 8: netsy.Elector.SendHeartbeat:output_type -> google.protobuf.Empty
-	5, // [5:9] is the sub-list for method output_type
-	1, // [1:5] is the sub-list for method input_type
-	1, // [1:1] is the sub-list for extension type_name
-	1, // [1:1] is the sub-list for extension extendee
-	0, // [0:1] is the sub-list for field type_name
+	6, // 0: netsy.RegisterNodeResponse.cluster_state:type_name -> netsy.ClusterState
+	5, // 1: netsy.GetMemberListResponse.members:type_name -> netsy.MemberEntry
+	0, // 2: netsy.Elector.RegisterNode:input_type -> netsy.RegisterNodeRequest
+	2, // 3: netsy.Elector.DeregisterNode:input_type -> netsy.DeregisterNodeRequest
+	7, // 4: netsy.Elector.GetClusterState:input_type -> google.protobuf.Empty
+	8, // 5: netsy.Elector.SendHeartbeat:input_type -> netsy.NodeState
+	3, // 6: netsy.Elector.GetMemberList:input_type -> netsy.GetMemberListRequest
+	1, // 7: netsy.Elector.RegisterNode:output_type -> netsy.RegisterNodeResponse
+	7, // 8: netsy.Elector.DeregisterNode:output_type -> google.protobuf.Empty
+	6, // 9: netsy.Elector.GetClusterState:output_type -> netsy.ClusterState
+	7, // 10: netsy.Elector.SendHeartbeat:output_type -> google.protobuf.Empty
+	4, // 11: netsy.Elector.GetMemberList:output_type -> netsy.GetMemberListResponse
+	7, // [7:12] is the sub-list for method output_type
+	2, // [2:7] is the sub-list for method input_type
+	2, // [2:2] is the sub-list for extension type_name
+	2, // [2:2] is the sub-list for extension extendee
+	0, // [0:2] is the sub-list for field type_name
 }
 
 func init() { file_proto_elector_proto_init() }
@@ -258,7 +427,7 @@ func file_proto_elector_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_proto_elector_proto_rawDesc), len(file_proto_elector_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   3,
+			NumMessages:   6,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

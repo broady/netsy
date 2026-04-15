@@ -1,7 +1,12 @@
-// Copyright 2025 Nadrama Pty Ltd
+// Copyright 2026 Nadrama Pty Ltd
 // SPDX-License-Identifier: Apache-2.0
 
 package buildvars
+
+// EtcdCompatVersion is the etcd API version that Netsy aims to be
+// compatible with. This is returned in the StatusResponse.Version
+// field so etcd clients can identify the compatibility target.
+const EtcdCompatVersion = "3.5.21"
 
 // set during build time
 var (
