@@ -229,6 +229,24 @@ func (m *Manager) GetMinWatchRevision(ctx context.Context, addr string) (int64, 
 	return resp.GetMinRevision(), nil
 }
 
+// SendCompactionNotice sends a compaction notice to a remote node and
+// returns whether the node confirmed the proposed compaction revision.
+func (m *Manager) SendCompactionNotice(ctx context.Context, addr string, revision int64) (bool, error) {
+	client, conn, err := m.dialNode(addr)
+	if err != nil {
+		return false, err
+	}
+	defer conn.Close()
+
+	resp, err := client.SendCompactionNotice(ctx, &proto.CompactionNotice{
+		CompactionRevision: revision,
+	})
+	if err != nil {
+		return false, err
+	}
+	return resp.GetConfirmed(), nil
+}
+
 // PushClusterStateTo pushes the given cluster state to a remote node.
 func (m *Manager) PushClusterStateTo(ctx context.Context, addr string, cs *proto.ClusterState) error {
 	client, conn, err := m.dialNode(addr)

@@ -373,7 +373,8 @@ func (f *Follower) handleCommit(committedRevision int64) {
 	}
 }
 
-// handleCompact persists and applies the Primary's compaction revision update.
+// handleCompact persists the Primary's compaction revision update,
+// updates in-memory state, and enqueues async compaction execution.
 func (f *Follower) handleCompact(compactionRevision int64) error {
 	if err := f.db.PersistCompactionRevision(compactionRevision); err != nil {
 		return err
@@ -384,6 +385,19 @@ func (f *Follower) handleCompact(compactionRevision int64) error {
 	f.logger.Info("received compaction revision update",
 		"compaction_revision", compactionRevision,
 	)
+
+	go func() {
+		affected, err := f.db.ExecuteCompaction(compactionRevision)
+		if err != nil {
+			f.logger.Error("compaction execution failed",
+				"compaction_revision", compactionRevision, "error", err,
+			)
+			return
+		}
+		f.logger.Info("compaction execution completed",
+			"compaction_revision", compactionRevision, "records_compacted", affected,
+		)
+	}()
 
 	return nil
 }

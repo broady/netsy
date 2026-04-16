@@ -116,14 +116,23 @@ func (w *Watcher) Cleanup(m *Manager, logger *slog.Logger) {
 	m.Unregister(w.id)
 }
 
-// CreateWatch handles watch create requests. The compactionRevision
-// parameter gates admission: any request for a startRevision below the
-// current compaction floor is rejected immediately.
-func (w *Watcher) CreateWatch(r *pb.WatchCreateRequest, latestRevision int64, compactionRevision int64, getRevision func(findRevision int64) (revision int64, compacted bool, compactedAt sql.NullString, err error), logger *slog.Logger) {
+// CreateWatch handles watch create requests. Admission is gated by the
+// higher of the persisted compaction revision and the watch-admission
+// floor (which may be provisionally raised during a compaction notice).
+// Any request for a startRevision at or below that floor is rejected.
+// The getAdmissionFloor function is re-evaluated under the watcher's
+// write lock to prevent TOCTOU races with SetWatchAdmissionFloor.
+func (w *Watcher) CreateWatch(r *pb.WatchCreateRequest, latestRevision int64, compactionRevision int64, getAdmissionFloor func() int64, getRevision func(findRevision int64) (revision int64, compacted bool, compactedAt sql.NullString, err error), logger *slog.Logger) {
 	logger.Debug("create watch", "watcher_id", w.id)
 
 	respHeader := &pb.ResponseHeader{
 		Revision: latestRevision,
+	}
+
+	// Use the higher of the persisted compaction revision and the
+	// watch-admission floor as the effective compaction floor.
+	if floor := getAdmissionFloor(); floor > compactionRevision {
+		compactionRevision = floor
 	}
 
 	// Reject watches requesting a revision below the compaction floor.
@@ -234,8 +243,32 @@ func (w *Watcher) CreateWatch(r *pb.WatchCreateRequest, latestRevision int64, co
 	}
 
 	// add watchID to the watcher
-	// obtain write lock, add, then release lock immediately
+	// obtain write lock, re-check admission floor, add, then release lock
 	w.Lock()
+	if r.StartRevision > 0 {
+		if floor := getAdmissionFloor(); floor > 0 && r.StartRevision <= floor {
+			w.Unlock()
+			cancelReason := fmt.Sprintf("required revision %d has been compacted; compaction revision is %d", r.StartRevision, floor)
+			logger.Debug("create watch rejected by compaction floor (re-check)",
+				"start_revision", r.StartRevision,
+				"compaction_revision", floor,
+			)
+			_ = w.client.Send(&pb.WatchResponse{
+				Header:  respHeader,
+				Created: true,
+				WatchId: watchID,
+			})
+			_ = w.client.Send(&pb.WatchResponse{
+				Header:          respHeader,
+				Canceled:        true,
+				CancelReason:    cancelReason,
+				CompactRevision: floor,
+				WatchId:         watchID,
+			})
+			cancelFunc()
+			return
+		}
+	}
 	w.watches[watchID] = watchData
 	w.progress[watchID] = r.ProgressNotify
 	w.Unlock()

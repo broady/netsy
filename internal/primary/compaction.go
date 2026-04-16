@@ -10,12 +10,13 @@ import (
 	"github.com/nadrama-com/netsy/internal/discovery"
 )
 
+// compactionNoticeTimeout is the per-node timeout for sending a
+// compaction notice and waiting for a response.
+const compactionNoticeTimeout = 5 * time.Second
+
 // RunCompactionScheduler runs a periodic loop that queries all registered
-// nodes for their minimum watch revision and computes the cluster-wide
-// global minimum.
-// TODO: The actual compaction notice/confirmation protocol is
-// implemented in Phase 21; this scheduler only determines whether a new
-// compaction revision is available and logs the result.
+// nodes for their minimum watch revision, computes the cluster-wide
+// global minimum, and drives the compaction notice/confirmation protocol.
 func (s *Server) RunCompactionScheduler(ctx context.Context) {
 	interval := s.config.CompactionInterval.Duration
 	if interval <= 0 {
@@ -41,8 +42,8 @@ func (s *Server) RunCompactionScheduler(ctx context.Context) {
 
 // runCompactionCycle performs a single compaction scheduling pass. It
 // queries every registered node for its minimum watch revision, computes
-// the global minimum, and logs whether a new compaction revision is
-// available. If any node cannot be reached, the cycle is aborted.
+// the global minimum, and if the revision has advanced, runs the
+// compaction notice/confirmation protocol.
 func (s *Server) runCompactionCycle(ctx context.Context) {
 	if err := s.requireActivePrimary(); err != nil {
 		return
@@ -70,7 +71,7 @@ func (s *Server) runCompactionCycle(ctx context.Context) {
 			return
 		}
 
-		queryCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+		queryCtx, cancel := context.WithTimeout(ctx, compactionNoticeTimeout)
 		minRev, err := s.peerClients.GetMinWatchRevision(queryCtx, addr)
 		cancel()
 
@@ -92,8 +93,17 @@ func (s *Server) runCompactionCycle(ctx context.Context) {
 		return
 	}
 
+	// The compaction revision is inclusive (matching etcd semantics),
+	// so we compact up to globalMin-1 to preserve the revision that
+	// the lowest active watch is tracking.
+	proposedRevision := globalMin - 1
+	if proposedRevision <= 0 {
+		s.logger.Debug("compaction cycle: proposed revision is zero after adjustment, skipping")
+		return
+	}
+
 	currentCompaction := s.state.Compaction()
-	if globalMin <= currentCompaction {
+	if proposedRevision <= currentCompaction {
 		s.logger.Debug("compaction cycle: no advancement needed",
 			"global_min", globalMin,
 			"current_compaction", currentCompaction,
@@ -101,12 +111,102 @@ func (s *Server) runCompactionCycle(ctx context.Context) {
 		return
 	}
 
-	s.logger.Info("compaction cycle: new compaction revision available",
-		"proposed_revision", globalMin,
+	s.logger.Info("compaction cycle: proposing new compaction revision",
+		"proposed_revision", proposedRevision,
+		"global_min_watch", globalMin,
 		"current_compaction", currentCompaction,
 		"nodes_queried", len(registrations),
 	)
 
-	// TODO: Phase 21 will implement the compaction notice/confirmation protocol
-	// here. For now, only the revision is logged.
+	s.runCompactionProtocol(ctx, registrations, proposedRevision)
+}
+
+// runCompactionProtocol sends compaction notices to all Nodes, retrying
+// each once on failure. If any Node fails to confirm after retry, the
+// protocol aborts and rolls back all already-confirmed Nodes by sending a
+// new notice with the previous compaction revision. On cluster-wide
+// acceptance, it persists the revision locally, broadcasts the compact
+// message on Follow streams, and enqueues async compaction execution.
+func (s *Server) runCompactionProtocol(ctx context.Context, registrations []discovery.NodeRegistration, compactionRevision int64) {
+	previousCompaction := s.state.Compaction()
+	confirmedAddrs := make([]string, 0, len(registrations))
+
+	for _, reg := range registrations {
+		var confirmed bool
+		for attempt := 1; attempt <= 2; attempt++ {
+			noticeCtx, cancel := context.WithTimeout(ctx, compactionNoticeTimeout)
+			ok, err := s.peerClients.SendCompactionNotice(noticeCtx, reg.PeerAdvertiseAddress, compactionRevision)
+			cancel()
+
+			if err != nil {
+				s.logger.Warn("compaction notice failed",
+					"node_id", reg.NodeID, "attempt", attempt, "error", err,
+				)
+				continue
+			}
+			if !ok {
+				s.logger.Warn("compaction notice rejected",
+					"node_id", reg.NodeID, "attempt", attempt,
+				)
+				continue
+			}
+			confirmed = true
+			break
+		}
+		if !confirmed {
+			s.logger.Warn("compaction cycle: aborting, node failed to confirm after retry",
+				"node_id", reg.NodeID,
+				"compaction_revision", compactionRevision,
+			)
+			for _, addr := range confirmedAddrs {
+				rollbackCtx, cancel := context.WithTimeout(ctx, compactionNoticeTimeout)
+				_, err := s.peerClients.SendCompactionNotice(rollbackCtx, addr, previousCompaction)
+				cancel()
+				if err != nil {
+					s.logger.Warn("compaction rollback: failed to reset node floor",
+						"addr", addr, "error", err,
+					)
+				}
+			}
+			return
+		}
+		confirmedAddrs = append(confirmedAddrs, reg.PeerAdvertiseAddress)
+	}
+
+	// All nodes confirmed — persist and broadcast.
+	if err := s.db.PersistCompactionRevision(compactionRevision); err != nil {
+		s.logger.Error("compaction cycle: failed to persist compaction revision locally",
+			"compaction_revision", compactionRevision,
+			"error", err,
+		)
+		return
+	}
+
+	s.state.SetCompaction(compactionRevision)
+	s.BroadcastCompact(compactionRevision)
+
+	s.logger.Info("compaction cycle: compaction revision confirmed cluster-wide",
+		"compaction_revision", compactionRevision,
+	)
+
+	go s.executeCompaction(compactionRevision)
+}
+
+// executeCompaction runs the actual data compaction asynchronously.
+// SQLite WAL mode provides snapshot isolation, so concurrent snapshot
+// reads are safe without additional locking.
+func (s *Server) executeCompaction(compactionRevision int64) {
+	affected, err := s.db.ExecuteCompaction(compactionRevision)
+	if err != nil {
+		s.logger.Error("compaction execution failed",
+			"compaction_revision", compactionRevision,
+			"error", err,
+		)
+		return
+	}
+
+	s.logger.Info("compaction execution completed",
+		"compaction_revision", compactionRevision,
+		"records_compacted", affected,
+	)
 }

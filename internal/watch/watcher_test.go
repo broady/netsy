@@ -5,6 +5,7 @@ package watch
 
 import (
 	"fmt"
+	"log/slog"
 	"testing"
 
 	"github.com/nadrama-com/netsy/internal/proto"
@@ -45,5 +46,72 @@ func TestIsWatchMatch(t *testing.T) {
 				t.Errorf("isWatchMatch(%+v, %+v)\n= %t\nwant %t", test.w, test.record, result, test.expect)
 			}
 		})
+	}
+}
+
+func TestSetWatchAdmissionFloorNoWatches(t *testing.T) {
+	m := NewManager(slog.Default(), nil)
+
+	if err := m.SetWatchAdmissionFloor(50); err != nil {
+		t.Fatalf("SetWatchAdmissionFloor(50) error = %v", err)
+	}
+	if got := m.WatchAdmissionFloor(); got != 50 {
+		t.Fatalf("WatchAdmissionFloor() = %d, want 50", got)
+	}
+}
+
+func TestSetWatchAdmissionFloorRejectsWhenWatchBelow(t *testing.T) {
+	m := NewManager(slog.Default(), nil)
+
+	// Simulate a watcher with a watch at startRevision 30.
+	w := &Watcher{
+		id:       1,
+		watches:  map[int64]watchEntry{1: {startRevision: 30}},
+		progress: map[int64]bool{},
+	}
+	m.Register(w)
+
+	err := m.SetWatchAdmissionFloor(50)
+	if err == nil {
+		t.Fatal("SetWatchAdmissionFloor(50) should fail with active watch at revision 30")
+	}
+
+	// Floor should have been rolled back.
+	if got := m.WatchAdmissionFloor(); got != 0 {
+		t.Fatalf("WatchAdmissionFloor() = %d, want 0 after rollback", got)
+	}
+}
+
+func TestSetWatchAdmissionFloorAcceptsWhenWatchAbove(t *testing.T) {
+	m := NewManager(slog.Default(), nil)
+
+	w := &Watcher{
+		id:       1,
+		watches:  map[int64]watchEntry{1: {startRevision: 80}},
+		progress: map[int64]bool{},
+	}
+	m.Register(w)
+
+	if err := m.SetWatchAdmissionFloor(50); err != nil {
+		t.Fatalf("SetWatchAdmissionFloor(50) error = %v", err)
+	}
+	if got := m.WatchAdmissionFloor(); got != 50 {
+		t.Fatalf("WatchAdmissionFloor() = %d, want 50", got)
+	}
+}
+
+func TestSetWatchAdmissionFloorOverwritesPrevious(t *testing.T) {
+	m := NewManager(slog.Default(), nil)
+
+	if err := m.SetWatchAdmissionFloor(50); err != nil {
+		t.Fatalf("SetWatchAdmissionFloor(50) error = %v", err)
+	}
+
+	// A second set with a lower value (rollback) should overwrite.
+	if err := m.SetWatchAdmissionFloor(30); err != nil {
+		t.Fatalf("SetWatchAdmissionFloor(30) error = %v", err)
+	}
+	if got := m.WatchAdmissionFloor(); got != 30 {
+		t.Fatalf("WatchAdmissionFloor() = %d, want 30", got)
 	}
 }

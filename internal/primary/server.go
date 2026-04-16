@@ -23,6 +23,7 @@ import (
 	"github.com/nadrama-com/netsy/internal/proto"
 	"github.com/nadrama-com/netsy/internal/snapshot"
 	"github.com/nadrama-com/netsy/internal/storage"
+	"github.com/nadrama-com/netsy/internal/watch"
 )
 
 // Server implements the Primary domain layer and the proto.PrimaryServer
@@ -38,6 +39,7 @@ type Server struct {
 	snapshotWorker *snapshot.Worker
 	state          *nodestate.State
 	peerClients    *peerclient.Manager
+	watchManager   *watch.Manager
 	replicas       *Replicas
 	followMu       sync.RWMutex
 	followStreams  map[string]*followSession
@@ -68,6 +70,7 @@ type Server struct {
 	// collector.
 	receiptCollector   *receiptCollector
 	receiptCollectorMu sync.Mutex
+
 }
 
 // NewServer constructs the Primary server and seeds its next revision
@@ -80,6 +83,7 @@ func NewServer(
 	storageClient storage.ObjectStorage,
 	state *nodestate.State,
 	peerClients *peerclient.Manager,
+	watchManager *watch.Manager,
 	heartbeatInterval time.Duration,
 	degradationCount int,
 ) (*Server, error) {
@@ -91,6 +95,7 @@ func NewServer(
 		snapshotWorker: snapshotWorker,
 		state:          state,
 		peerClients:    peerClients,
+		watchManager:   watchManager,
 		replicas:       NewReplicas(),
 		followStreams:  make(map[string]*followSession),
 		chunkBuffer: newChunkBuffer(

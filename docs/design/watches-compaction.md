@@ -45,11 +45,9 @@ If the first or second revision is no longer tracked by a Watch, they can be saf
 
 ## How Compaction Works in Netsy
 
->  __STATUS__: Compaction is not currently implemented in Netsy.
-
 The current __Primary__ can periodically schedule Compaction across all __Nodes__.
 
-To do this, it retrieves the global min revision of all __Watches__ for each __Node__ via the __Peer__ API, and then finds the global minimum of that, which becomes the "Compaction Revision" where every revision prior to that is considered safe to "compact".
+To do this, it retrieves the global min revision of all __Watches__ for each __Node__ via the __Peer__ API, and then finds the global minimum of that. The Compaction Revision is set to one below this global minimum, so that every revision up to and including the Compaction Revision is considered safe to "compact" (matching etcd's inclusive semantics).
 
 - If a __Node__ cannot be successfully queried for the min revision, the Compaction process ends early and awaits its next scheduled occurrence.
 
@@ -59,10 +57,12 @@ Once the Compaction Revision has been identified, if it is greater than the prev
 
 2. Once the notice has been accepted cluster-wide, the __Primary__ sends a logical `Compact` message on `Follow` streams. On receiving that confirmation, each __Node__ persists the Compaction Revision into its local `compactions` table and keeps the watch-admission gate in place durably. If a restarting Node or a newly elected __Primary__ finds this table empty during startup or preflight, it must seed it from the Compaction Revision implied by contiguous existing `records` rows with `compacted_at` already set before accepting new Watches or writes.
 
-__Nodes__ must then enqueue an async compaction task, where it simply sets the compacted_at timestamp and value to NULL for any record not already compacted with a revision number lower than the compacted_revision. Note that unlike etcd, Netsy does not remove the record entirely, only the value blob.
+__Nodes__ must then enqueue an async compaction task, where it simply sets the compacted_at timestamp and value to NULL for any record not already compacted with a revision number at or below the compacted_revision (inclusive, matching etcd semantics)
+
+Note that unlike etcd, Netsy does not remove the record entirely, only the value blob.
 
 ## Compaction & Snapshots
 
 Because of the design of this compaction mechanism, all future snapshots created will be effectively compacted - retaining a full history of revisions, but without the overhead of (often large) values. No new records/chunks will be produced as a result of the process.
 
-To avoid compaction impacting snapshots in-progress, we must ensure the snapshotting and compaction processes do not take place concurrently.  
+Compaction and snapshot creation can safely run concurrently because SQLite's WAL mode provides snapshot isolation — a snapshot read sees a consistent point-in-time view regardless of concurrent compaction writes. No additional locking between the two processes is required.

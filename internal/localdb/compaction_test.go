@@ -106,6 +106,86 @@ func TestPersistCompactionRevisionIdempotent(t *testing.T) {
 	}
 }
 
+func TestExecuteCompaction(t *testing.T) {
+	db := openTestDB(t)
+
+	insertReplicated(t, db, &proto.Record{
+		Revision:       1,
+		Key:            []byte("a"),
+		Created:        true,
+		Version:        1,
+		CreateRevision: 1,
+		CreatedAt:      timestamppb.New(time.Unix(1, 0).UTC()),
+		LeaderId:       "leader-1",
+		Value:          []byte("val-a"),
+	})
+	insertReplicated(t, db, &proto.Record{
+		Revision:       2,
+		Key:            []byte("b"),
+		Created:        true,
+		Version:        1,
+		CreateRevision: 2,
+		CreatedAt:      timestamppb.New(time.Unix(2, 0).UTC()),
+		LeaderId:       "leader-1",
+		Value:          []byte("val-b"),
+	})
+	insertReplicated(t, db, &proto.Record{
+		Revision:       3,
+		Key:            []byte("c"),
+		Created:        true,
+		Version:        1,
+		CreateRevision: 3,
+		CreatedAt:      timestamppb.New(time.Unix(3, 0).UTC()),
+		LeaderId:       "leader-1",
+		Value:          []byte("val-c"),
+	})
+
+	// Compaction revision is inclusive (matching etcd): revision 2
+	// means revisions 1 and 2 are compacted, revision 3 is preserved.
+	affected, err := db.ExecuteCompaction(2)
+	if err != nil {
+		t.Fatalf("ExecuteCompaction(2) error = %v", err)
+	}
+	if affected != 2 {
+		t.Fatalf("ExecuteCompaction(2) affected = %d, want 2", affected)
+	}
+
+	// Verify revisions 1 and 2 have NULL values and compacted_at set.
+	for _, rev := range []int64{1, 2} {
+		record, err := db.FindRecordByRev(rev)
+		if err != nil {
+			t.Fatalf("FindRecordByRev(%d) error = %v", rev, err)
+		}
+		if record.Value != nil {
+			t.Fatalf("revision %d value = %v, want nil", rev, record.Value)
+		}
+		if record.CompactedAt == nil {
+			t.Fatalf("revision %d compacted_at is nil, want set", rev)
+		}
+	}
+
+	// Verify revision 3 is untouched.
+	record, err := db.FindRecordByRev(3)
+	if err != nil {
+		t.Fatalf("FindRecordByRev(3) error = %v", err)
+	}
+	if string(record.Value) != "val-c" {
+		t.Fatalf("revision 3 value = %q, want %q", record.Value, "val-c")
+	}
+	if record.CompactedAt != nil {
+		t.Fatalf("revision 3 compacted_at = %v, want nil", record.CompactedAt)
+	}
+
+	// Running again should be idempotent (0 affected).
+	affected, err = db.ExecuteCompaction(2)
+	if err != nil {
+		t.Fatalf("ExecuteCompaction(2) second call error = %v", err)
+	}
+	if affected != 0 {
+		t.Fatalf("ExecuteCompaction(2) second call affected = %d, want 0", affected)
+	}
+}
+
 func TestReplicateRecordDuplicateIsIdempotentAndPreservesCompactedAt(t *testing.T) {
 	db := openTestDB(t)
 

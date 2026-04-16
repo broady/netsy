@@ -84,7 +84,7 @@ func (cs *ClientAPIServer) Watch(ws pb.Watch_WatchServer) error {
 		}
 		if cr := msg.GetCreateRequest(); cr != nil {
 			// handle watch create request
-			w.CreateWatch(cr, cs.state.Committed(), cs.state.Compaction(), cs.db.GetRevision, cs.logger)
+			w.CreateWatch(cr, cs.state.Committed(), cs.state.Compaction(), cs.watchManager.WatchAdmissionFloor, cs.db.GetRevision, cs.logger)
 		}
 		if cr := msg.GetCancelRequest(); cr != nil {
 			// handle watch cancel request

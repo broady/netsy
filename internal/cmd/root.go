@@ -197,6 +197,11 @@ func NewRootCmd() *cobra.Command {
 		snapshotWorker := snapshot.NewWorker(filteredLogger, c, db, storageClient)
 		defer snapshotWorker.Stop()
 
+		// watchManager is shared by the Client API server (watch event
+		// distribution), Primary (compaction watch-admission gating), and
+		// Node server (min watch revision queries).
+		watchManager := watch.NewManager(filteredLogger.With("component", "watch"), db)
+
 		// Create peer manager for outbound connections. Constructed before the
 		// Primary server because the compaction scheduler dials each node's
 		// Node service to query minimum watch revisions.
@@ -218,6 +223,7 @@ func NewRootCmd() *cobra.Command {
 			storageClient,
 			state,
 			peerManager,
+			watchManager,
 			c.Replication.HeartbeatInterval.Duration,
 			c.Replication.DegradationCount,
 		)
@@ -260,7 +266,6 @@ func NewRootCmd() *cobra.Command {
 		}
 		gopts = append(gopts, grpc.Creds(credentials.NewTLS(tlsConfigClientAPI)))
 		grpcServer := grpc.NewServer(gopts...)
-		watchManager := watch.NewManager(filteredLogger.With("component", "watch"), db)
 		clientApiServer := clientapi.NewServer(filteredLogger, c, db, grpcServer, primarySrv, peerManager, watchManager, state, electionRunner.ElectorServer())
 
 		// Wait for first election cycle to know the current Elector

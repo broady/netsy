@@ -5,6 +5,7 @@ package node
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"testing"
 
@@ -26,10 +27,15 @@ func (m *mockRevisionSource) LatestRevision() (int64, error) {
 
 type mockWatchRevisionSource struct {
 	minRevision int64
+	floorErr    error
 }
 
 func (m *mockWatchRevisionSource) MinWatchRevision() int64 {
 	return m.minRevision
+}
+
+func (m *mockWatchRevisionSource) SetWatchAdmissionFloor(_ int64) error {
+	return m.floorErr
 }
 
 func newTestServer(revision int64) *Server {
@@ -126,6 +132,60 @@ func TestGetMinWatchRevisionNoWatches(t *testing.T) {
 	}
 	if resp.GetMinRevision() != 100 {
 		t.Fatalf("expected min_revision 100 (committed_revision), got %d", resp.GetMinRevision())
+	}
+}
+
+func TestSendCompactionNoticeAccepted(t *testing.T) {
+	state := nodestate.New(slog.Default())
+	_ = state.SetHealth(nodestate.HealthHealthy)
+
+	mgr := peerclient.NewManager(slog.Default(), "node-a", nil, state)
+
+	srv := NewServer(
+		slog.Default(),
+		"node-a",
+		1000,
+		state,
+		&mockRevisionSource{revision: 100},
+		mgr,
+		&mockWatchRevisionSource{minRevision: 50, floorErr: nil},
+	)
+
+	resp, err := srv.SendCompactionNotice(context.Background(), &proto.CompactionNotice{
+		CompactionRevision: 40,
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !resp.GetConfirmed() {
+		t.Fatal("expected confirmed=true")
+	}
+}
+
+func TestSendCompactionNoticeRejected(t *testing.T) {
+	state := nodestate.New(slog.Default())
+	_ = state.SetHealth(nodestate.HealthHealthy)
+
+	mgr := peerclient.NewManager(slog.Default(), "node-a", nil, state)
+
+	srv := NewServer(
+		slog.Default(),
+		"node-a",
+		1000,
+		state,
+		&mockRevisionSource{revision: 100},
+		mgr,
+		&mockWatchRevisionSource{minRevision: 50, floorErr: fmt.Errorf("active watch exists below proposed compaction revision")},
+	)
+
+	resp, err := srv.SendCompactionNotice(context.Background(), &proto.CompactionNotice{
+		CompactionRevision: 60,
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if resp.GetConfirmed() {
+		t.Fatal("expected confirmed=false")
 	}
 }
 

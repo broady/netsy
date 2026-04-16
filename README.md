@@ -31,14 +31,14 @@ Current Features:
 * KV ranges, KV transactions, Watches - supporting all options used by Kubernetes  
 * S3 snapshots - full copies of records from leader SQLite database stored in S3  
 * S3 chunking - delta of records from last snapshot stored in S3 chunk files  
-* Backfill from S3 - starting a a fresh server restores from snapshots+chunks in S3
+* Backfill from S3 - starting a a fresh server restores from snapshots+chunks in S3  
+* Compaction - cluster-wide protocol to remove values from historical revisions
 
 Roadmap:
 
 * Conformance Tests - VCR-style acceptance test suite (in development)  
 * Encryption - supporting value field encryption, with rolling key rotation  
-* Leases - used by Kubernetes.  
-* Compaction - removing values from historical revisions to save space
+* Leases - used by Kubernetes.
 
 ## Usage
 

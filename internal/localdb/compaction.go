@@ -65,3 +65,26 @@ func (db *database) PersistCompactionRevision(revision int64) error {
 
 	return nil
 }
+
+// ExecuteCompaction sets value to NULL and compacted_at to the current
+// timestamp for all records at or below the given Compaction Revision
+// that have not already been compacted. This matches etcd semantics
+// where the compaction revision is inclusive. Returns the number of
+// affected rows.
+func (db *database) ExecuteCompaction(compactionRevision int64) (int64, error) {
+	if compactionRevision <= 0 {
+		return 0, nil
+	}
+
+	const query = `UPDATE records
+		SET value = NULL, compacted_at = ?
+		WHERE revision <= ? AND compacted_at IS NULL`
+
+	compactedAt := time.Now().UTC().Format(time.RFC3339Nano)
+	result, err := db.conn.Exec(query, compactedAt, compactionRevision)
+	if err != nil {
+		return 0, fmt.Errorf("execute compaction below revision %d: %w", compactionRevision, err)
+	}
+
+	return result.RowsAffected()
+}

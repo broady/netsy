@@ -4,9 +4,11 @@
 package watch
 
 import (
+	"fmt"
 	"log/slog"
 	"sort"
 	"sync"
+	"sync/atomic"
 
 	"github.com/nadrama-com/netsy/internal/proto"
 	"go.etcd.io/etcd/api/v3/mvccpb"
@@ -32,6 +34,11 @@ type Manager struct {
 	// Register and Unregister hold a write lock.
 	mu       sync.RWMutex
 	watchers map[int64]*Watcher
+
+	// watchAdmissionFloor gates new Watch requests; revisions below
+	// this are rejected. Raised atomically during compaction notice
+	// acceptance and persisted durably after cluster-wide confirmation.
+	watchAdmissionFloor atomic.Int64
 
 	pendingMu sync.Mutex
 	pending   map[int64]struct{}
@@ -203,6 +210,37 @@ func (m *Manager) MinWatchRevision() int64 {
 		w.RUnlock()
 	}
 	return minRev
+}
+
+// WatchAdmissionFloor returns the current watch-admission floor revision.
+func (m *Manager) WatchAdmissionFloor() int64 {
+	return m.watchAdmissionFloor.Load()
+}
+
+// SetWatchAdmissionFloor atomically sets the watch-admission floor to
+// the given revision, then validates that no existing active watch has
+// a startRevision below it. If validation fails, the floor is rolled
+// back to its previous value and an error is returned.
+func (m *Manager) SetWatchAdmissionFloor(revision int64) error {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	previous := m.watchAdmissionFloor.Load()
+	m.watchAdmissionFloor.Store(revision)
+
+	for _, w := range m.watchers {
+		w.RLock()
+		for _, entry := range w.watches {
+			if entry.startRevision > 0 && entry.startRevision < revision {
+				w.RUnlock()
+				m.watchAdmissionFloor.Store(previous)
+				return fmt.Errorf("active watch exists below proposed compaction revision %d", revision)
+			}
+		}
+		w.RUnlock()
+	}
+
+	return nil
 }
 
 // distributeFromDB reads a record from SQLite by revision and delivers

@@ -23,8 +23,11 @@ type RevisionSource interface {
 
 // WatchRevisionSource provides the minimum watch revision across all
 // active watches on this node. Returns -1 when no watches are active.
+// It also supports setting the watch-admission floor for the compaction
+// notice protocol.
 type WatchRevisionSource interface {
 	MinWatchRevision() int64
+	SetWatchAdmissionFloor(revision int64) error
 }
 
 // Server implements the proto.NodeServer gRPC interface. It is hosted
@@ -125,4 +128,26 @@ func (s *Server) GetMinWatchRevision(_ context.Context, _ *emptypb.Empty) (*prot
 	return &proto.MinWatchRevisionResponse{
 		MinRevision: minRev,
 	}, nil
+}
+
+// SendCompactionNotice handles a compaction notice from the Primary.
+// It atomically raises the watch-admission floor to the proposed
+// compaction revision and validates that no active watch would be
+// invalidated. Returns confirmed=true on success, confirmed=false
+// if an active watch exists below the proposed revision.
+func (s *Server) SendCompactionNotice(_ context.Context, req *proto.CompactionNotice) (*proto.CompactionNoticeResponse, error) {
+	revision := req.GetCompactionRevision()
+
+	if err := s.watches.SetWatchAdmissionFloor(revision); err != nil {
+		s.logger.Warn("compaction notice rejected",
+			"compaction_revision", revision,
+			"reason", err,
+		)
+		return &proto.CompactionNoticeResponse{Confirmed: false}, nil
+	}
+
+	s.logger.Info("compaction notice accepted",
+		"compaction_revision", revision,
+	)
+	return &proto.CompactionNoticeResponse{Confirmed: true}, nil
 }
