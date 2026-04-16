@@ -6,6 +6,7 @@ package clientapi
 
 import (
 	"context"
+	"time"
 
 	"github.com/nadrama-com/netsy/internal/commonapi"
 	pb "go.etcd.io/etcd/api/v3/etcdserverpb"
@@ -15,6 +16,7 @@ import (
 // above the committed revision are tentative and must not be visible to
 // clients.
 func (cs *ClientAPIServer) Range(ctx context.Context, r *pb.RangeRequest) (*pb.RangeResponse, error) {
+	start := time.Now()
 	committed := cs.state.Committed()
 
 	// Limit the request revision to the committed revision so tentative
@@ -23,5 +25,14 @@ func (cs *ClientAPIServer) Range(ctx context.Context, r *pb.RangeRequest) (*pb.R
 		r.Revision = committed
 	}
 
-	return commonapi.Range(cs.db, ctx, r)
+	resp, err := commonapi.Range(cs.db, ctx, r)
+	if cs.metrics != nil {
+		result := "success"
+		if err != nil {
+			result = "error"
+		}
+		cs.metrics.RequestsTotal.WithLabelValues("range", result).Inc()
+		cs.metrics.RequestDuration.WithLabelValues("range").Observe(time.Since(start).Seconds())
+	}
+	return resp, err
 }

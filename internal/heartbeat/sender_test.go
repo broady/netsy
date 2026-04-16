@@ -36,6 +36,7 @@ func TestBuildNodeState(t *testing.T) {
 		12345,
 		time.Second,
 		time.Second,
+		nil,
 	)
 
 	ns := s.BuildNodeState()
@@ -65,6 +66,7 @@ func newTestSender(nodeID string, state *nodestate.State) *Sender {
 		time.Now().Unix(),
 		time.Second,
 		50*time.Millisecond,
+		nil,
 	)
 }
 

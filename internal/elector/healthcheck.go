@@ -82,11 +82,20 @@ func (s *Server) checkNodeHealth(ctx context.Context) {
 	}
 
 	for _, nodeID := range toDeregistered {
-		s.logger.Info("auto-deregistering node",
-			"node_id", nodeID,
-			"timeout", s.deregTimeout,
+		var memberID uint64
+		if entry, ok := s.nodeMap.Get(nodeID); ok {
+			memberID = entry.MemberID
+		}
+		s.logger.Info("node_deregistered",
+			"target_node_id", nodeID,
+			"member_id", memberID,
+			"trigger", "auto",
+			"reason", "timeout",
 		)
 		s.nodeMap.Remove(nodeID)
+		if s.metrics != nil {
+			s.metrics.AutoDeregistrations.Inc()
+		}
 
 		if err := discovery.DeleteNodeRegistration(ctx, s.store, nodeID); err != nil {
 			s.logger.Warn("failed to delete registration file during auto-deregistration",
@@ -94,6 +103,23 @@ func (s *Server) checkNodeHealth(ctx context.Context) {
 				"error", err,
 			)
 		}
+	}
+
+	// Update node health gauges after all mutations.
+	if s.metrics != nil {
+		var registered, healthy, degraded int
+		s.nodeMap.ForEach(func(entry NodeEntry) {
+			registered++
+			switch entry.HealthState {
+			case nodestate.HealthHealthy:
+				healthy++
+			case nodestate.HealthDegraded:
+				degraded++
+			}
+		})
+		s.metrics.RegisteredNodes.Set(float64(registered))
+		s.metrics.HealthyNodes.Set(float64(healthy))
+		s.metrics.DegradedNodes.Set(float64(degraded))
 	}
 
 	// If the current Primary was degraded or deregistered, clear it

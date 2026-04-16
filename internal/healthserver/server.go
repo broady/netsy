@@ -10,6 +10,9 @@ import (
 	"net"
 	"net/http"
 
+	"github.com/prometheus/client_golang/prometheus"
+
+	"github.com/nadrama-com/netsy/internal/metrics"
 	"github.com/nadrama-com/netsy/internal/nodestate"
 )
 
@@ -21,8 +24,9 @@ type Server struct {
 	listener net.Listener
 }
 
-// New creates a Server bound to addr. Call Start to begin serving.
-func New(logger *slog.Logger, addr string, state *nodestate.State) (*Server, error) {
+// New creates a Server bound to addr. When reg is non-nil, a /metrics
+// endpoint is registered alongside /health. Call Start to begin serving.
+func New(logger *slog.Logger, addr string, state *nodestate.State, reg *prometheus.Registry) (*Server, error) {
 	ln, err := net.Listen("tcp", addr)
 	if err != nil {
 		return nil, err
@@ -36,6 +40,9 @@ func New(logger *slog.Logger, addr string, state *nodestate.State) (*Server, err
 		server:   &http.Server{Handler: mux},
 	}
 	mux.HandleFunc("/health", s.handleHealth)
+	if reg != nil {
+		mux.Handle("/metrics", metrics.Handler(reg))
+	}
 	return s, nil
 }
 

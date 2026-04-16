@@ -11,6 +11,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/nadrama-com/netsy/internal/metrics"
 	"github.com/nadrama-com/netsy/internal/nodestate"
 	"github.com/nadrama-com/netsy/internal/peerclient"
 	"github.com/nadrama-com/netsy/internal/proto"
@@ -54,6 +55,8 @@ type Sender struct {
 	// tick so we can clear lastReceiptSent on Primary changes.
 	lastPrimaryMu     sync.Mutex
 	lastPrimaryNodeID string
+
+	retryMetrics *metrics.RetryMetrics
 }
 
 // NewSender creates a heartbeat Sender.
@@ -66,6 +69,7 @@ func NewSender(
 	startTime int64,
 	electorInterval time.Duration,
 	replicationInterval time.Duration,
+	retryMetrics *metrics.RetryMetrics,
 ) *Sender {
 	return &Sender{
 		logger:              logger,
@@ -76,6 +80,7 @@ func NewSender(
 		startTime:           startTime,
 		electorInterval:     electorInterval,
 		replicationInterval: replicationInterval,
+		retryMetrics:        retryMetrics,
 	}
 }
 
@@ -171,6 +176,9 @@ func (s *Sender) sendToElector(ctx context.Context) {
 			"error", err,
 		)
 
+		if s.retryMetrics != nil {
+			s.retryMetrics.Inc("heartbeat_send")
+		}
 		if _, err := client.SendHeartbeat(sendCtx, ns); err != nil {
 			s.logger.Warn("failed to send heartbeat",
 				"target", "elector",
@@ -240,6 +248,9 @@ func (s *Sender) sendToPrimaryIfNeeded(ctx context.Context) {
 			"error", err,
 		)
 
+		if s.retryMetrics != nil {
+			s.retryMetrics.Inc("heartbeat_send")
+		}
 		if _, err := client.SendHeartbeat(sendCtx, ns); err != nil {
 			s.logger.Warn("failed to send heartbeat",
 				"target", "primary",

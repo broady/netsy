@@ -56,6 +56,7 @@ func newChunkBufferTestServer(t *testing.T, store storage.ObjectStorage) *Server
 			"node-a",
 			0,
 			0,
+			nil,
 		),
 	}
 }

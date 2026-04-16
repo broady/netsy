@@ -50,6 +50,7 @@ type ClientAPIServer struct {
 	peerClients   *peerclient.Manager
 	watchManager  *watch.Manager
 	memberLister  memberLister
+	metrics       *Metrics
 
 	pb.UnimplementedKVServer
 	pb.UnimplementedWatchServer
@@ -62,7 +63,7 @@ type ClientAPIServer struct {
 // NewServer registers the etcd-compatible Client API services on the provided gRPC server.
 // The memberLister is called locally when this node is the Elector; non-Elector
 // nodes proxy MemberList requests to the Elector via peerClients.
-func NewServer(logger *slog.Logger, conf *config.Config, db localdb.Database, grpcServer *grpc.Server, peerServer *primary.Server, peerClients *peerclient.Manager, watchManager *watch.Manager, state *nodestate.State, ml memberLister) *ClientAPIServer {
+func NewServer(logger *slog.Logger, conf *config.Config, db localdb.Database, grpcServer *grpc.Server, peerServer *primary.Server, peerClients *peerclient.Manager, watchManager *watch.Manager, state *nodestate.State, ml memberLister, m *Metrics) *ClientAPIServer {
 	clientServer := &ClientAPIServer{
 		logger:        logger,
 		config:        conf,
@@ -73,6 +74,7 @@ func NewServer(logger *slog.Logger, conf *config.Config, db localdb.Database, gr
 		peerClients:   peerClients,
 		watchManager:  watchManager,
 		memberLister:  ml,
+		metrics:       m,
 	}
 
 	pb.RegisterKVServer(grpcServer, clientServer)

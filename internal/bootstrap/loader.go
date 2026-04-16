@@ -8,6 +8,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"time"
 
 	"google.golang.org/protobuf/types/known/emptypb"
 
@@ -16,6 +17,7 @@ import (
 	"github.com/nadrama-com/netsy/internal/discovery"
 	"github.com/nadrama-com/netsy/internal/elector"
 	"github.com/nadrama-com/netsy/internal/localdb"
+	"github.com/nadrama-com/netsy/internal/metrics"
 	"github.com/nadrama-com/netsy/internal/nodestate"
 	"github.com/nadrama-com/netsy/internal/peerclient"
 	"github.com/nadrama-com/netsy/internal/proto"
@@ -54,8 +56,12 @@ func Run(
 	peers *peerclient.Manager,
 	election *elector.Runner,
 	follower Follower,
+	metrics *Metrics,
+	storageMetrics *metrics.ObjectStorageMetrics,
 ) (*Result, error) {
 	var err error
+
+	logger.Info("loading_stage_started", "stage", "registration")
 
 	// ensure node registration file exists in object storage
 	err = discovery.WriteNodeRegistration(ctx, store, discovery.NodeRegistration{
@@ -74,9 +80,13 @@ func Run(
 		PeerAdvertiseAddress:   cfg.AdvertisePeer,
 	}
 	var registerResp *proto.RegisterNodeResponse
+	regStart := time.Now()
 	if election.IsLeader() {
 		registerResp, err = election.RegisterLocalNode(ctx, registerReq)
 		if err != nil {
+			if metrics != nil {
+				metrics.RegistrationDuration.WithLabelValues("error").Observe(time.Since(regStart).Seconds())
+			}
 			return nil, fmt.Errorf("register with local elector: %w", err)
 		}
 	} else {
@@ -86,9 +96,23 @@ func Run(
 		}
 		registerResp, err = client.RegisterNode(ctx, registerReq)
 		if err != nil {
+			if metrics != nil {
+				metrics.RegistrationDuration.WithLabelValues("error").Observe(time.Since(regStart).Seconds())
+			}
 			return nil, fmt.Errorf("register with elector: %w", err)
 		}
 	}
+	if metrics != nil {
+		metrics.RegistrationDuration.WithLabelValues("success").Observe(time.Since(regStart).Seconds())
+		metrics.LoadingStageDuration.WithLabelValues("registration", "success").Observe(time.Since(regStart).Seconds())
+	}
+	logger.Info("node_registered",
+		"target_node_id", cfg.NodeID,
+		"member_id", registerResp.GetMemberId(),
+		"trigger", "startup",
+		"duration_ms", time.Since(regStart).Milliseconds(),
+	)
+	logger.Info("loading_stage_completed", "stage", "registration", "result", "success", "duration_ms", time.Since(regStart).Milliseconds())
 
 	// update member id from registration response into node state
 	err = state.SetMemberID(registerResp.GetMemberId())
@@ -117,27 +141,33 @@ func Run(
 	}
 	peers.ApplyClusterState(ctx, nodestate.ClusterStateFromProto(clusterState))
 
-	// get latest sanpshot
+	// get latest snapshot
 	latestSnapshotInfo, err := datastore.GetLatestSnapshot(ctx, store)
 	if err != nil {
 		return nil, fmt.Errorf("get latest snapshot: %w", err)
 	}
 
 	// backfill local db
+	backfillStart := time.Now()
+	logger.Info("loading_stage_started", "stage", "backfill")
 	for attempt := 1; attempt <= maxIntegrityAttempts; attempt++ {
 		if attempt > 1 {
-			logger.Warn("integrity check failed after backfill; truncating and retrying",
-				"attempt", attempt,
-			)
+			logger.Info("loading_restarted", "reason", "integrity_check_failed", "attempt", attempt)
+			if metrics != nil {
+				metrics.LoadingRestarts.WithLabelValues("integrity_check_failed").Inc()
+				metrics.LocalDBRebuilds.WithLabelValues("integrity_check_failed").Inc()
+			}
+			logger.Info("local_db_rebuild_started", "reason", "integrity_check_failed", "attempt", attempt)
 			follower.Stop()
 			if err := db.Truncate(); err != nil {
 				return nil, fmt.Errorf("truncate local database: %w", err)
 			}
 			state.SetCommitted(0)
 			state.SetCompaction(0)
+			logger.Info("local_db_rebuild_completed", "reason", "integrity_check_failed", "attempt", attempt)
 		}
 
-		backfillFrom, err := prepareLocalState(ctx, logger, cfg, state, db, store, latestSnapshotInfo)
+		backfillFrom, err := prepareLocalState(ctx, logger, cfg, state, db, store, latestSnapshotInfo, storageMetrics)
 		if err != nil {
 			return nil, err
 		}
@@ -154,7 +184,7 @@ func Run(
 			follower.Stop()
 		}
 
-		if err := backfillChunksFromRevision(ctx, logger, db, cfg, backfillFrom, store); err != nil {
+		if err := backfillChunksFromRevision(ctx, logger, db, cfg, backfillFrom, store, storageMetrics); err != nil {
 			return nil, fmt.Errorf("backfill chunks: %w", err)
 		}
 
@@ -176,6 +206,11 @@ func Run(
 		state.SetCommitted(latestRevision)
 	}
 
+	if metrics != nil {
+		metrics.LoadingStageDuration.WithLabelValues("backfill", "success").Observe(time.Since(backfillStart).Seconds())
+	}
+	logger.Info("loading_stage_completed", "stage", "backfill", "result", "success", "duration_ms", time.Since(backfillStart).Milliseconds())
+
 	if err := state.SetHealth(nodestate.HealthHealthy); err != nil {
 		return nil, fmt.Errorf("transition to healthy: %w", err)
 	}
@@ -194,6 +229,7 @@ func prepareLocalState(
 	db localdb.Database,
 	store storage.ObjectStorage,
 	latestSnapshotInfo *datastore.LatestSnapshotInfo,
+	storageMetrics *metrics.ObjectStorageMetrics,
 ) (int64, error) {
 	if err := seedCompactionFromLocalDB(state, db); err != nil {
 		return 0, err
@@ -212,7 +248,7 @@ func prepareLocalState(
 		return latestRevision, nil
 	}
 
-	if err := importLatestSnapshot(ctx, logger, db, cfg, latestSnapshotInfo, store); err != nil {
+	if err := importLatestSnapshot(ctx, logger, db, cfg, latestSnapshotInfo, store, storageMetrics); err != nil {
 		return 0, fmt.Errorf("import latest snapshot: %w", err)
 	}
 

@@ -50,10 +50,20 @@ func (s *Server) runPrimaryElectionLoop(ctx context.Context) {
 			}
 		}
 
+		s.logger.Info("election_started", "role", "elector", "registered_nodes", s.nodeMap.Count())
+		electionStart := time.Now()
 		elected, err := s.electPrimaryOnce(ctx)
 		if err != nil {
-			s.logger.Info("primary election attempt failed, retrying",
+			if s.metrics != nil {
+				s.metrics.PrimaryElections.WithLabelValues("failure").Inc()
+				s.metrics.PrimaryElectionDuration.WithLabelValues("failure").Observe(time.Since(electionStart).Seconds())
+				s.metrics.PrimaryElectionFailures.WithLabelValues("contact_failure").Inc()
+			}
+			s.logger.Info("election_failed",
+				"role", "elector",
+				"reason", "contact_failure",
 				"error", err,
+				"duration_ms", time.Since(electionStart).Milliseconds(),
 			)
 			select {
 			case <-ctx.Done():
@@ -63,15 +73,22 @@ func (s *Server) runPrimaryElectionLoop(ctx context.Context) {
 			continue
 		}
 
-		s.logger.Info("primary elected",
-			"node_id", elected.NodeID,
-			"member_id", elected.MemberID,
-			"peer_addr", elected.PeerAdvertiseAddr,
-		)
-
 		s.previousPrimary = nodestate.NodeInfo{}
 		s.state.SetClusterPrimary(elected)
 		s.pushClusterState(ctx)
+
+		if s.metrics != nil {
+			s.metrics.PrimaryElections.WithLabelValues("success").Inc()
+			s.metrics.PrimaryElectionDuration.WithLabelValues("success").Observe(time.Since(electionStart).Seconds())
+		}
+		s.logger.Info("election_completed",
+			"role", "elector",
+			"elected_node_id", elected.NodeID,
+			"member_id", elected.MemberID,
+			"peer_addr", elected.PeerAdvertiseAddr,
+			"registered_nodes", s.nodeMap.Count(),
+			"duration_ms", time.Since(electionStart).Milliseconds(),
+		)
 	}
 }
 
@@ -89,12 +106,14 @@ func (s *Server) electPrimaryOnce(ctx context.Context) (nodestate.NodeInfo, erro
 	if err := s.checkPreviousPrimary(ctx); err != nil {
 		return nodestate.NodeInfo{}, fmt.Errorf("previous primary check: %w", err)
 	}
+	s.logger.Info("election_stage_completed", "role", "elector", "stage", "previous_primary_check")
 
 	// collect node states per quorum rules.
 	states, err := s.collectNodeStates(ctx)
 	if err != nil {
 		return nodestate.NodeInfo{}, fmt.Errorf("collect node states: %w", err)
 	}
+	s.logger.Info("election_stage_completed", "role", "elector", "stage", "collect_node_states", "contacted_nodes", len(states))
 
 	// preserve existing Active Primary.
 	if elected, ok := s.findActivePrimary(states); ok {
@@ -111,6 +130,7 @@ func (s *Server) electPrimaryOnce(ctx context.Context) (nodestate.NodeInfo, erro
 	if len(healthy) == 0 {
 		return nodestate.NodeInfo{}, fmt.Errorf("no healthy candidates for primary election")
 	}
+	s.logger.Info("election_stage_completed", "role", "elector", "stage", "candidate_selection", "healthy_candidates", len(healthy))
 
 	// tie-break by latest revision (desc), then start time (desc).
 	sort.Slice(healthy, func(i, j int) bool {
@@ -171,6 +191,9 @@ func (s *Server) checkPreviousPrimary(ctx context.Context) error {
 				"node_id", prevPrimary.NodeID,
 				"error", err,
 			)
+			if s.retryMetrics != nil {
+				s.retryMetrics.Inc("election_contact")
+			}
 			select {
 			case <-ctx.Done():
 				return ctx.Err()
@@ -320,6 +343,15 @@ func (s *Server) collectNodeStates(ctx context.Context) ([]electionCandidate, er
 		}
 		contacted++
 		candidates = append(candidates, r.candidate)
+	}
+
+	if s.metrics != nil {
+		if contacted > 0 {
+			s.metrics.PrimaryElectionContacts.WithLabelValues("success").Add(float64(contacted))
+		}
+		if len(contactErrors) > 0 {
+			s.metrics.PrimaryElectionContacts.WithLabelValues("failure").Add(float64(len(contactErrors)))
+		}
 	}
 
 	// Enforce contactability rules.

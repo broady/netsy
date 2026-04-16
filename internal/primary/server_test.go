@@ -138,7 +138,7 @@ func TestGracefulDrainActivePrimary(t *testing.T) {
 		logger: slog.Default(),
 		state:  state,
 		chunkBuffer: newChunkBuffer(
-			slog.Default(), state, store, "node-a", 0, 0,
+			slog.Default(), state, store, "node-a", 0, 0, nil,
 		),
 		replicas:     NewReplicas(),
 		followStreams: make(map[string]*followSession),
@@ -187,7 +187,7 @@ func TestGracefulDrainFromStarting(t *testing.T) {
 		logger: slog.Default(),
 		state:  state,
 		chunkBuffer: newChunkBuffer(
-			slog.Default(), state, store, "node-a", 0, 0,
+			slog.Default(), state, store, "node-a", 0, 0, nil,
 		),
 	}
 

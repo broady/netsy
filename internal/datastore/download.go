@@ -12,9 +12,11 @@ import (
 	"log/slog"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/nadrama-com/netsy/internal/datafile"
 	"github.com/nadrama-com/netsy/internal/localdb"
+	"github.com/nadrama-com/netsy/internal/metrics"
 	pb "github.com/nadrama-com/netsy/internal/proto"
 	"github.com/nadrama-com/netsy/internal/storage"
 )
@@ -75,11 +77,16 @@ func DownloadAndImportFile(
 	key string,
 	size int64,
 	expectedKind pb.FileKind,
+	storageMetrics *metrics.ObjectStorageMetrics,
 ) error {
 	var tempFiles []string
 	defer cleanupTempFiles(logger, tempFiles)
 
+	readStart := time.Now()
 	reader, err := Download(ctx, store, key, size, dataDir, &tempFiles)
+	if storageMetrics != nil {
+		storageMetrics.ObserveRead(time.Since(readStart), err)
+	}
 	if err != nil {
 		return fmt.Errorf("download %s: %w", key, err)
 	}

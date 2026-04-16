@@ -13,6 +13,7 @@ import (
 	"github.com/nadrama-com/netsy/internal/config"
 	"github.com/nadrama-com/netsy/internal/datastore"
 	"github.com/nadrama-com/netsy/internal/localdb"
+	"github.com/nadrama-com/netsy/internal/metrics"
 	pb "github.com/nadrama-com/netsy/internal/proto"
 	"github.com/nadrama-com/netsy/internal/storage"
 )
@@ -26,6 +27,7 @@ func importLatestSnapshot(
 	cfg *config.Config,
 	snapshotInfo *datastore.LatestSnapshotInfo,
 	storageClient storage.ObjectStorage,
+	storageMetrics *metrics.ObjectStorageMetrics,
 ) error {
 	if snapshotInfo == nil || !snapshotInfo.Found {
 		return nil
@@ -45,6 +47,7 @@ func importLatestSnapshot(
 		snapshotInfo.Key,
 		snapshotInfo.Size,
 		pb.FileKind_KIND_SNAPSHOT,
+		storageMetrics,
 	)
 }
 
@@ -58,6 +61,7 @@ func backfillChunksFromRevision(
 	cfg *config.Config,
 	fromRevision int64,
 	storageClient storage.ObjectStorage,
+	storageMetrics *metrics.ObjectStorageMetrics,
 ) error {
 	chunks, err := datastore.ListChunks(ctx, storageClient, fromRevision)
 	if err != nil {
@@ -84,6 +88,7 @@ func backfillChunksFromRevision(
 			chunk.Key,
 			chunk.Size,
 			pb.FileKind_KIND_CHUNK,
+			storageMetrics,
 		); err != nil {
 			return fmt.Errorf("import chunk %s: %w", chunk.Key, err)
 		}

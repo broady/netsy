@@ -193,6 +193,21 @@ func (m *Manager) AdvanceCommittedRevision(rev int64) {
 	}
 }
 
+// WatchCount returns the total number of active watches across all
+// watchers on this node.
+func (m *Manager) WatchCount() int {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	count := 0
+	for _, w := range m.watchers {
+		w.RLock()
+		count += len(w.watches)
+		w.RUnlock()
+	}
+	return count
+}
+
 // MinWatchRevision returns the lowest startRevision across all active
 // watches on this node. If no watches are active, it returns -1 to
 // signal the caller should fall back to committed revision.

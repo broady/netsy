@@ -19,6 +19,7 @@ import (
 
 	"github.com/nadrama-com/netsy/internal/config"
 	"github.com/nadrama-com/netsy/internal/localdb"
+	"github.com/nadrama-com/netsy/internal/metrics"
 	"github.com/nadrama-com/netsy/internal/nodestate"
 	"github.com/nadrama-com/netsy/internal/peerclient"
 	"github.com/nadrama-com/netsy/internal/proto"
@@ -41,6 +42,7 @@ type Server struct {
 	state          *nodestate.State
 	peerClients    *peerclient.Manager
 	watchManager   *watch.Manager
+	metrics        *Metrics
 	replicas       *Replicas
 	followMu       sync.RWMutex
 	followStreams  map[string]*followSession
@@ -56,6 +58,11 @@ type Server struct {
 
 	heartbeatInterval time.Duration
 	degradationCount  int
+	compactionMetrics *metrics.CompactionMetrics
+	retryMetrics      *metrics.RetryMetrics
+	storageMetrics    *metrics.ObjectStorageMetrics
+
+	lastWritePath string
 
 	// leaderTxnMutex serializes all transaction processing on the leader node.
 	// This mutex should ONLY be used by the leader, not by follower nodes.
@@ -85,20 +92,28 @@ func NewServer(
 	state *nodestate.State,
 	peerClients *peerclient.Manager,
 	watchManager *watch.Manager,
+	m *Metrics,
 	heartbeatInterval time.Duration,
 	degradationCount int,
+	compactionMetrics *metrics.CompactionMetrics,
+	retryMetrics *metrics.RetryMetrics,
+	storageMetrics *metrics.ObjectStorageMetrics,
 ) (*Server, error) {
 	s := &Server{
-		logger:         logger,
-		config:         conf,
-		db:             db,
-		storageClient:  storageClient,
-		snapshotWorker: snapshotWorker,
-		state:          state,
-		peerClients:    peerClients,
-		watchManager:   watchManager,
-		replicas:       NewReplicas(),
-		followStreams:  make(map[string]*followSession),
+		logger:            logger,
+		config:            conf,
+		db:                db,
+		storageClient:     storageClient,
+		snapshotWorker:    snapshotWorker,
+		state:             state,
+		peerClients:       peerClients,
+		watchManager:      watchManager,
+		metrics:           m,
+		replicas:          NewReplicas(),
+		followStreams:      make(map[string]*followSession),
+		compactionMetrics: compactionMetrics,
+		retryMetrics:      retryMetrics,
+		storageMetrics:    storageMetrics,
 		chunkBuffer: newChunkBuffer(
 			logger,
 			state,
@@ -106,10 +121,13 @@ func NewServer(
 			conf.NodeID,
 			conf.Replication.ChunkBuffer.ThresholdSizeMB,
 			conf.Replication.ChunkBuffer.ThresholdAgeMinutes,
+			storageMetrics,
 		),
 		heartbeatInterval: heartbeatInterval,
 		degradationCount:  degradationCount,
 	}
+
+	s.chunkBuffer.setMetrics(m)
 
 	if err := s.initializeRevisionCounter(); err != nil {
 		return nil, err
@@ -169,10 +187,13 @@ func (s *Server) Replicas() *Replicas {
 // shutting-down node is the Primary. Returns an error if the flush fails;
 // callers should still proceed with shutdown even on error.
 func (s *Server) GracefulDrain(ctx context.Context) error {
+	drainStart := time.Now()
 	ps := s.state.Primary()
 	if ps == nodestate.PrimaryReplica {
 		return nil
 	}
+
+	s.logger.Info("drain_started")
 
 	// Transition to Draining if currently Active or Starting.
 	if ps == nodestate.PrimaryActive || ps == nodestate.PrimaryStarting {
@@ -182,12 +203,19 @@ func (s *Server) GracefulDrain(ctx context.Context) error {
 	}
 
 	// Flush the chunk buffer so all buffered records reach object storage.
-	if err := s.chunkBuffer.flush(ctx, "shutdown"); err != nil {
+	if err := s.chunkBuffer.flush(ctx, "draining"); err != nil {
 		s.logger.Error("chunk buffer flush failed during graceful drain", "error", err)
+		if s.metrics != nil {
+			s.metrics.DrainDuration.WithLabelValues("error").Observe(time.Since(drainStart).Seconds())
+		}
+		s.logger.Info("drain_completed", "result", "error", "duration_ms", time.Since(drainStart).Milliseconds())
 		return fmt.Errorf("chunk buffer flush: %w", err)
 	}
 
-	s.logger.Info("primary graceful drain completed")
+	if s.metrics != nil {
+		s.metrics.DrainDuration.WithLabelValues("success").Observe(time.Since(drainStart).Seconds())
+	}
+	s.logger.Info("drain_completed", "result", "success", "duration_ms", time.Since(drainStart).Milliseconds())
 	return nil
 }
 

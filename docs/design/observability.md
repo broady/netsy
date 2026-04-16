@@ -58,7 +58,7 @@ These metrics make long-running phases visible beyond the high-level state gauge
 |---|---|---|---|
 | `netsy_loading_stage_duration_seconds` | Histogram | `stage`, `result` | Duration of individual loading stages. |
 | `netsy_loading_restarts_total` | Counter | `reason` | Number of times the loading flow restarts. |
-| `netsy_sqlite_rebuilds_total` | Counter | `reason` | Number of times a Node discards or rebuilds local SQLite state and starts over from snapshot, chunks, or a fresh schema. |
+| `netsy_local_db_rebuilds_total` | Counter | `reason` | Number of times a Node discards or rebuilds local database state and starts over from snapshot, chunks, or a fresh schema. |
 | `netsy_primary_preflight_stage_duration_seconds` | Histogram | `stage`, `result` | Duration of Primary preflight stages. |
 | `netsy_primary_drain_duration_seconds` | Histogram | `result` | Time spent draining before stepping down or exiting. |
 | `netsy_primary_chunk_buffer_flushes_total` | Counter | `trigger`, `result` | Chunk buffer flush attempts. `trigger` values: `size`, `age`, `draining`, `rollback`, `manual`. |
@@ -122,15 +122,15 @@ These metrics describe the Elector's view of registered and healthy Nodes, and t
 
 ### Object Storage
 
-Object storage metrics should separate operation kind and write mode so sync write latency is not blended with async buffer flushes or snapshots.
+Write metrics carry `kind` (`chunk` or `snapshot`) and `mode` (`sync` or `async`) labels so operators can distinguish client-facing sync writes from background buffer flushes. Read metrics carry only `result` — reads are off the hot path (bootstrap, preflight, discovery). Only explicitly instrumented write paths record metrics; internal metadata writes (discovery, registration) are excluded.
 
 | Metric | Type | Labels | Description |
 |---|---|---|---|
-| `netsy_object_storage_writes_total` | Counter | `kind`, `mode`, `result` | Object storage write attempts. `kind` is `chunk` or `snapshot`. `mode` is `sync`, `async`, or `maintenance`. |
+| `netsy_object_storage_writes_total` | Counter | `kind`, `mode`, `result` | Object storage write attempts. `kind` is `chunk` or `snapshot`. `mode` is `sync` or `async`. |
 | `netsy_object_storage_write_duration_seconds` | Histogram | `kind`, `mode`, `result` | Object storage write duration. |
 | `netsy_object_storage_write_bytes` | Histogram | `kind`, `mode` | Payload size written to object storage. |
-| `netsy_object_storage_reads_total` | Counter | `kind`, `result` | Object storage read attempts during loading/backfill. `kind` is `chunk` or `snapshot`. |
-| `netsy_object_storage_read_duration_seconds` | Histogram | `kind`, `result` | Object storage read duration. |
+| `netsy_object_storage_reads_total` | Counter | `result` | Object storage read attempts. |
+| `netsy_object_storage_read_duration_seconds` | Histogram | `result` | Object storage read duration. |
 
 ### Snapshots
 
@@ -197,7 +197,7 @@ Logged whenever a Node changes state or enters or exits a major lifecycle phase.
 | `duration_ms` | Stage duration when completed |
 | `error` | Optional error text |
 
-When local SQLite state is newly created, discarded, or rebuilt, Netsy should emit dedicated lifecycle logs such as `sqlite_initialized`, `sqlite_rebuild_started`, and `sqlite_rebuild_completed` with a bounded `reason` field.
+When local database state is newly created, discarded, or rebuilt, Netsy should emit dedicated lifecycle logs such as `local_db_initialized`, `local_db_rebuild_started`, and `local_db_rebuild_completed` with a bounded `reason` field.
 
 ### Election Events
 
@@ -276,7 +276,7 @@ When diagnosing issues, the following metric relationships are useful:
 - __Buffer pressure__: rising `netsy_primary_chunk_buffer_bytes` together with rising `netsy_primary_chunk_buffer_age_seconds` suggests async flushes are not keeping up.
 - __Retry pressure__: rising `netsy_retries_total` for `operation="object_storage_write"`, `operation="heartbeat_send"`, or `operation="receipt_send"` indicates degradation in progress. A sustained increase in object storage write retries may precede the Primary entering `Draining`.
 - __Loading stalls__: if `netsy_state_health{state="loading"}` remains `1`, inspect recent `loading_stage_started` and `loading_stage_completed` logs together with `netsy_loading_stage_duration_seconds` to see which startup step is slow or failing.
-- __SQLite rebuild churn__: increases in `netsy_sqlite_rebuilds_total` indicate repeated local-database resets or rebuilds. Correlate with `sqlite_rebuild_started` and `sqlite_rebuild_completed` logs to see the trigger.
+- __Local DB rebuild churn__: increases in `netsy_local_db_rebuilds_total` indicate repeated local-database resets or rebuilds. Correlate with `local_db_rebuild_started` and `local_db_rebuild_completed` logs to see the trigger.
 - __Election stalls__: inspect `netsy_elector_primary_election_duration_seconds`, `netsy_elector_primary_election_failures_total`, `netsy_elector_primary_election_contacts_total`, and election logs to determine whether the cluster is blocked on prior-Primary contact, node contactability, or candidate validation.
 - __Compaction stalls__: rising `netsy_watch_min_revision` skew across Nodes (compare by Prometheus `instance` label), long `netsy_compaction_duration_seconds`, or repeated increments in `netsy_primary_compaction_confirmation_failures_total` indicate watch-admission, confirmation, or local compaction-work issues.
 - __Snapshot staleness__: a rising `netsy_primary_snapshot_age_seconds` or repeated `netsy_primary_snapshot_creations_total{result="error"}` increments indicate snapshots are not being created, which increases loading/recovery time for new Nodes.

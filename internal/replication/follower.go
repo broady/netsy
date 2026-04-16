@@ -14,6 +14,7 @@ import (
 
 	"github.com/nadrama-com/netsy/internal/heartbeat"
 	"github.com/nadrama-com/netsy/internal/localdb"
+	"github.com/nadrama-com/netsy/internal/metrics"
 	"github.com/nadrama-com/netsy/internal/nodestate"
 	"github.com/nadrama-com/netsy/internal/peerclient"
 	"github.com/nadrama-com/netsy/internal/proto"
@@ -43,6 +44,15 @@ type Follower struct {
 	lagCheckMu     sync.Mutex
 	lagCheckCancel context.CancelFunc
 	lagCheckSeq    uint64
+
+	metrics           *Metrics
+	compactionMetrics *metrics.CompactionMetrics
+	retryMetrics      *metrics.RetryMetrics
+}
+
+// SetMetrics sets the Replica-scoped metrics reference.
+func (f *Follower) SetMetrics(m *Metrics) {
+	f.metrics = m
 }
 
 // NewFollower creates a new replication Follower.
@@ -54,15 +64,21 @@ func NewFollower(
 	db localdb.Database,
 	heartbeatSender *heartbeat.Sender,
 	watchManager *watch.Manager,
+	replicaMetrics *Metrics,
+	compactionMetrics *metrics.CompactionMetrics,
+	retryMetrics *metrics.RetryMetrics,
 ) *Follower {
 	return &Follower{
-		logger:          logger,
-		nodeID:          nodeID,
-		state:           state,
-		peers:           peers,
-		db:              db,
-		heartbeatSender: heartbeatSender,
-		watchManager:    watchManager,
+		logger:            logger,
+		nodeID:            nodeID,
+		state:             state,
+		peers:             peers,
+		db:                db,
+		heartbeatSender:   heartbeatSender,
+		watchManager:      watchManager,
+		metrics:           replicaMetrics,
+		compactionMetrics: compactionMetrics,
+		retryMetrics:      retryMetrics,
 	}
 }
 
@@ -344,6 +360,9 @@ func (f *Follower) handleRecord(stream proto.Primary_FollowClient, record *proto
 			"error", err,
 		)
 
+		if f.retryMetrics != nil {
+			f.retryMetrics.Inc("receipt_send")
+		}
 		if err := stream.Send(receipt); err != nil {
 			f.logger.Warn("failed to send receipt",
 				"attempt", 2,
@@ -356,6 +375,9 @@ func (f *Follower) handleRecord(stream proto.Primary_FollowClient, record *proto
 	}
 
 	f.heartbeatSender.MarkReceiptSent()
+	if f.metrics != nil {
+		f.metrics.ReceiptAge.MarkSent()
+	}
 	return nil
 }
 
@@ -388,12 +410,19 @@ func (f *Follower) handleCompact(compactionRevision int64) error {
 	)
 
 	go func() {
+		start := time.Now()
 		affected, err := f.db.ExecuteCompaction(compactionRevision)
 		if err != nil {
+			if f.compactionMetrics != nil {
+				f.compactionMetrics.Duration.WithLabelValues("error").Observe(time.Since(start).Seconds())
+			}
 			f.logger.Error("compaction execution failed",
 				"compaction_revision", compactionRevision, "error", err,
 			)
 			return
+		}
+		if f.compactionMetrics != nil {
+			f.compactionMetrics.Duration.WithLabelValues("success").Observe(time.Since(start).Seconds())
 		}
 		f.logger.Info("compaction execution completed",
 			"compaction_revision", compactionRevision, "records_compacted", affected,

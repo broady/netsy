@@ -45,6 +45,8 @@ func newElectionTestServer() *Server {
 		0, // disabled quorum for simpler tests
 		time.Second,
 		mgr,
+		nil,
+		nil,
 	)
 }
 

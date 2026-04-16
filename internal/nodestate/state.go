@@ -15,6 +15,7 @@ import (
 type State struct {
 	mu      sync.RWMutex
 	logger  *slog.Logger
+	metrics *StateMetrics
 	health  HealthState
 	elector ElectorState
 	primary PrimaryState
@@ -37,6 +38,14 @@ func New(logger *slog.Logger) *State {
 		elector: ElectorFollower,
 		primary: PrimaryReplica,
 	}
+}
+
+// SetMetrics sets the Prometheus state metrics that are updated on
+// state transitions. Must be called before any concurrent state changes.
+func (s *State) SetMetrics(m *StateMetrics) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.metrics = m
 }
 
 // Health returns the current HealthState.
@@ -76,6 +85,9 @@ func (s *State) SetHealth(to HealthState) error {
 		"previous", string(from),
 		"new", string(to),
 	)
+	if s.metrics != nil {
+		s.metrics.SetHealth(string(to))
+	}
 	return nil
 }
 
@@ -95,6 +107,9 @@ func (s *State) SetElector(to ElectorState) error {
 		"previous", string(from),
 		"new", string(to),
 	)
+	if s.metrics != nil {
+		s.metrics.SetElector(string(to))
+	}
 	return nil
 }
 
@@ -114,6 +129,9 @@ func (s *State) SetPrimary(to PrimaryState) error {
 		"previous", string(from),
 		"new", string(to),
 	)
+	if s.metrics != nil {
+		s.metrics.SetPrimary(string(to))
+	}
 	return nil
 }
 
@@ -125,6 +143,9 @@ func (s *State) Committed() int64 {
 // SetCommitted sets the committed revision.
 func (s *State) SetCommitted(rev int64) {
 	s.committed.Store(rev)
+	if s.metrics != nil {
+		s.metrics.CommittedRevision.Set(float64(rev))
+	}
 }
 
 // Compaction returns the current compaction revision.
@@ -135,6 +156,16 @@ func (s *State) Compaction() int64 {
 // SetCompaction sets the compaction revision.
 func (s *State) SetCompaction(rev int64) {
 	s.compaction.Store(rev)
+	if s.metrics != nil {
+		s.metrics.CompactionRevision.Set(float64(rev))
+	}
+}
+
+// SetLatest sets the latest revision gauge for Prometheus scraping.
+func (s *State) SetLatest(rev int64) {
+	if s.metrics != nil {
+		s.metrics.LatestRevision.Set(float64(rev))
+	}
 }
 
 // MemberID returns the local stable etcd member ID.

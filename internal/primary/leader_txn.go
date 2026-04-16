@@ -60,6 +60,7 @@ var errQuorumNotMet = errors.New("quorum not met: insufficient replica receipts 
 // Essentially the compare and failure condition for update and delete are the same, just success differs.
 // Note that create and update can have a lease ID specified, which gets recorded in the success operation.
 func (ps *Server) LeaderTxn(ctx context.Context, r *pb.TxnRequest) (record *proto.Record, parsed *pb.TxnResponse, err error) {
+	txnStart := time.Now()
 	var rangeResp *pb.RangeResponse
 	var inserted *proto.Record
 	if err := ps.requireActivePrimary(); err != nil {
@@ -82,11 +83,34 @@ func (ps *Server) LeaderTxn(ctx context.Context, r *pb.TxnRequest) (record *prot
 	record.Revision = ps.nextRevisionID.Load()
 	// Determine whether to use Path 1 (sync object storage) or Path 2
 	// (quorum transactions) for this write.
+	healthyForQuorum := ps.replicas.HealthyForQuorumCount()
 	strategy := selectTxnStrategy(
 		*ps.config.Replication.Quorum,
 		ps.state.ClusterState().NodeCount,
-		ps.replicas.HealthyForQuorumCount(),
+		healthyForQuorum,
 	)
+
+	// Set initial metrics
+	pathLabel := "sync"
+	if strategy.useQuorum {
+		pathLabel = "quorum"
+	}
+	if ps.lastWritePath != "" && ps.lastWritePath != pathLabel {
+		ps.logger.Info("write_path_switched",
+			"from", ps.lastWritePath,
+			"to", pathLabel,
+			"healthy_replicas", healthyForQuorum,
+		)
+	}
+	ps.lastWritePath = pathLabel
+
+	if ps.metrics != nil {
+		ps.metrics.SetWritePath(pathLabel)
+		ps.metrics.RequiredReceipts.Set(float64(strategy.requiredReceipts))
+		ps.metrics.HealthyReplicas.Set(float64(healthyForQuorum))
+		ps.metrics.ReceiptedReplicas.Set(float64(ps.replicas.ReceiptedCount()))
+	}
+
 	// Use transaction for writes
 	tx, err := ps.db.BeginTx()
 	if err != nil {
@@ -119,9 +143,31 @@ func (ps *Server) LeaderTxn(ctx context.Context, r *pb.TxnRequest) (record *prot
 			err = ps.executeObjectStorageTxn(ctx, tx, inserted)
 		}
 		if err != nil {
+			if ps.metrics != nil {
+				ps.metrics.WriteTransactions.WithLabelValues(pathLabel, "error").Inc()
+				ps.metrics.WriteDuration.WithLabelValues(pathLabel, "error").Observe(time.Since(txnStart).Seconds())
+			}
+			ps.logger.Warn("write_failed",
+				"path", pathLabel,
+				"revision", record.Revision,
+				"error", err,
+			)
 			return nil, nil, err
 		}
 	}
+	if ps.metrics != nil {
+		ps.metrics.WriteTransactions.WithLabelValues(pathLabel, "success").Inc()
+		ps.metrics.WriteDuration.WithLabelValues(pathLabel, "success").Observe(time.Since(txnStart).Seconds())
+	}
+	ps.logger.Debug("write_transaction",
+		"path", pathLabel,
+		"revision", record.Revision,
+		"healthy_replicas", healthyForQuorum,
+		"required_receipts", strategy.requiredReceipts,
+		"received_receipts", ps.replicas.ReceiptedCount(),
+		"duration_ms", time.Since(txnStart).Milliseconds(),
+	)
+
 	resp, err := BuildTxnResponse(inserted, rangeResp)
 	if err != nil {
 		return nil, nil, fmt.Errorf("error building response: %w", err)
@@ -144,12 +190,16 @@ func (ps *Server) executeObjectStorageTxn(ctx context.Context, tx *localdb.Tx, r
 	if err := tx.Commit(); err != nil {
 		return fmt.Errorf("failed to commit transaction: %w", err)
 	}
+	if ps.metrics != nil {
+		ps.metrics.ObjectStorageRevision.Set(float64(record.Revision))
+	}
 	// Increment revision counter only after successful commit
 	ps.nextRevisionID.Add(1)
 	// Broadcast record to replicas asynchronously (do not wait for Receipt)
 	ps.BroadcastRecord(record)
 	// Advance committed revision and notify replicas
 	ps.state.SetCommitted(record.Revision)
+	ps.state.SetLatest(record.Revision)
 	ps.BroadcastCommit(record.Revision)
 	// Calculate record size for snapshot tracking
 	recordSize := int64(googlepb.Size(record))
@@ -175,6 +225,14 @@ func (ps *Server) executeQuorumTxn(ctx context.Context, tx *localdb.Tx, record *
 	if !collector.wait(quorumReceiptTimeout) {
 		// Quorum not met — rollback.
 		tx.Rollback()
+		if ps.metrics != nil {
+			ps.metrics.QuorumRollbacks.WithLabelValues("receipt_timeout").Inc()
+		}
+		ps.logger.Warn("quorum_rollback",
+			"revision", record.Revision,
+			"reason", "receipt_timeout",
+			"required_receipts", strategy.requiredReceipts,
+		)
 
 		// Mark timed-out Replicas as unhealthy.
 		for _, nodeID := range collector.unackedQuorumNodeIDs(ps.replicas.All()) {
@@ -193,7 +251,7 @@ func (ps *Server) executeQuorumTxn(ctx context.Context, tx *localdb.Tx, record *
 		go func() {
 			flushCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 			defer cancel()
-			if err := ps.chunkBuffer.flush(flushCtx, "quorum_rollback"); err != nil {
+			if err := ps.chunkBuffer.flush(flushCtx, "rollback"); err != nil {
 				ps.logger.Warn("quorum rollback buffer flush failed", "error", err)
 			}
 		}()
@@ -215,6 +273,7 @@ func (ps *Server) executeQuorumTxn(ctx context.Context, tx *localdb.Tx, record *
 	// Advance committed revision before responding to the client so
 	// Replicas can serve the record on read-after-write.
 	ps.state.SetCommitted(record.Revision)
+	ps.state.SetLatest(record.Revision)
 	ps.BroadcastCommit(record.Revision)
 
 	// Buffer record for async object storage write.

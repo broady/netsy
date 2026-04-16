@@ -7,6 +7,7 @@ package clientapi
 import (
 	"context"
 	"errors"
+	"time"
 
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -22,11 +23,30 @@ import (
 // to the current Primary via the Peer API. Replica watch delivery for
 // forwarded writes happens via the replication stream, not here.
 func (cs *ClientAPIServer) Txn(ctx context.Context, r *pb.TxnRequest) (*pb.TxnResponse, error) {
+	start := time.Now()
 	primaryID := cs.state.ClusterState().Primary.NodeID
 	if primaryID != "" && primaryID != cs.config.NodeID {
-		return cs.forwardTxn(ctx, r)
+		resp, err := cs.forwardTxn(ctx, r)
+		if cs.metrics != nil {
+			result := "success"
+			if err != nil {
+				result = "error"
+			}
+			cs.metrics.ProxyRequestsTotal.WithLabelValues("txn", result).Inc()
+			cs.metrics.ProxyRequestDuration.WithLabelValues("txn").Observe(time.Since(start).Seconds())
+		}
+		return resp, err
 	}
-	return cs.ApplyTxn(ctx, r)
+	resp, err := cs.ApplyTxn(ctx, r)
+	if cs.metrics != nil {
+		result := "success"
+		if err != nil {
+			result = "error"
+		}
+		cs.metrics.RequestsTotal.WithLabelValues("txn", result).Inc()
+		cs.metrics.RequestDuration.WithLabelValues("txn").Observe(time.Since(start).Seconds())
+	}
+	return resp, err
 }
 
 // forwardTxn validates the TxnRequest locally to reject malformed

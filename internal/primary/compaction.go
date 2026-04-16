@@ -112,7 +112,7 @@ func (s *Server) runCompactionCycle(ctx context.Context) {
 		return
 	}
 
-	s.logger.Info("compaction cycle: proposing new compaction revision",
+	s.logger.Info("compaction_started",
 		"proposed_revision", proposedRevision,
 		"global_min_watch", globalMin,
 		"current_compaction", currentCompaction,
@@ -129,25 +129,29 @@ func (s *Server) runCompactionCycle(ctx context.Context) {
 // acceptance, it persists the revision locally, broadcasts the compact
 // message on Follow streams, and enqueues async compaction execution.
 func (s *Server) runCompactionProtocol(ctx context.Context, registrations []discovery.NodeRegistration, compactionRevision int64) {
+	compactionStart := time.Now()
 	previousCompaction := s.state.Compaction()
 	confirmedAddrs := make([]string, 0, len(registrations))
 
 	for _, reg := range registrations {
 		var confirmed bool
 		for attempt := 1; attempt <= 2; attempt++ {
+			if attempt > 1 && s.retryMetrics != nil {
+				s.retryMetrics.Inc("compaction_confirmation")
+			}
 			noticeCtx, cancel := context.WithTimeout(ctx, compactionNoticeTimeout)
 			ok, err := s.peerClients.SendCompactionNotice(noticeCtx, reg.PeerAdvertiseAddress, compactionRevision)
 			cancel()
 
 			if err != nil {
-				s.logger.Warn("compaction notice failed",
+				s.logger.Warn("compaction_notice_failed",
 					"node_id", reg.NodeID, "attempt", attempt, "error", err,
 				)
 				continue
 			}
 			if !ok {
-				s.logger.Warn("compaction notice rejected",
-					"node_id", reg.NodeID, "attempt", attempt,
+				s.logger.Warn("compaction_notice_failed",
+					"node_id", reg.NodeID, "attempt", attempt, "reason", "rejected",
 				)
 				continue
 			}
@@ -159,6 +163,11 @@ func (s *Server) runCompactionProtocol(ctx context.Context, registrations []disc
 				"node_id", reg.NodeID,
 				"compaction_revision", compactionRevision,
 			)
+			if s.metrics != nil {
+				s.metrics.CompactionsTotal.WithLabelValues("error").Inc()
+				s.metrics.CompactionCoordDuration.WithLabelValues("error").Observe(time.Since(compactionStart).Seconds())
+				s.metrics.CompactionConfirmFailures.WithLabelValues("node_rejected").Inc()
+			}
 			for _, addr := range confirmedAddrs {
 				rollbackCtx, cancel := context.WithTimeout(ctx, compactionNoticeTimeout)
 				_, err := s.peerClients.SendCompactionNotice(rollbackCtx, addr, previousCompaction)
@@ -186,8 +195,13 @@ func (s *Server) runCompactionProtocol(ctx context.Context, registrations []disc
 	s.state.SetCompaction(compactionRevision)
 	s.BroadcastCompact(compactionRevision)
 
-	s.logger.Info("compaction cycle: compaction revision confirmed cluster-wide",
+	if s.metrics != nil {
+		s.metrics.CompactionsTotal.WithLabelValues("success").Inc()
+		s.metrics.CompactionCoordDuration.WithLabelValues("success").Observe(time.Since(compactionStart).Seconds())
+	}
+	s.logger.Info("compaction_completed",
 		"compaction_revision", compactionRevision,
+		"duration_ms", time.Since(compactionStart).Milliseconds(),
 	)
 
 	go s.executeCompaction(compactionRevision)
@@ -197,8 +211,12 @@ func (s *Server) runCompactionProtocol(ctx context.Context, registrations []disc
 // SQLite WAL mode provides snapshot isolation, so concurrent snapshot
 // reads are safe without additional locking.
 func (s *Server) executeCompaction(compactionRevision int64) {
+	start := time.Now()
 	affected, err := s.db.ExecuteCompaction(compactionRevision)
 	if err != nil {
+		if s.compactionMetrics != nil {
+			s.compactionMetrics.Duration.WithLabelValues("error").Observe(time.Since(start).Seconds())
+		}
 		s.logger.Error("compaction execution failed",
 			"compaction_revision", compactionRevision,
 			"error", err,
@@ -206,6 +224,9 @@ func (s *Server) executeCompaction(compactionRevision int64) {
 		return
 	}
 
+	if s.compactionMetrics != nil {
+		s.compactionMetrics.Duration.WithLabelValues("success").Observe(time.Since(start).Seconds())
+	}
 	s.logger.Info("compaction execution completed",
 		"compaction_revision", compactionRevision,
 		"records_compacted", affected,

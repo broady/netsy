@@ -38,6 +38,9 @@ func (cs *ClientAPIServer) Watch(ws pb.Watch_WatchServer) error {
 	// create a new watcher and register it with the watch manager
 	w := watch.NewWatcher(ws)
 	watcherID := cs.watchManager.Register(w)
+	if cs.metrics != nil {
+		cs.metrics.Watchers.Inc()
+	}
 
 	// start a goroutine to handle messages on the inbox channel
 	go func() {
@@ -86,10 +89,12 @@ func (cs *ClientAPIServer) Watch(ws pb.Watch_WatchServer) error {
 		if cr := msg.GetCreateRequest(); cr != nil {
 			// handle watch create request
 			w.CreateWatch(cr, cs.state.Committed(), cs.state.Compaction(), cs.watchManager.WatchAdmissionFloor, cs.db.GetRevision, cs.logger)
+			cs.updateWatchMetrics()
 		}
 		if cr := msg.GetCancelRequest(); cr != nil {
 			// handle watch cancel request
 			w.CancelWatch(cr.WatchId, cs.state.Committed(), nil, cs.logger)
+			cs.updateWatchMetrics()
 		}
 		if pr := msg.GetProgressRequest(); pr != nil {
 			// handle watch progress request
@@ -98,6 +103,22 @@ func (cs *ClientAPIServer) Watch(ws pb.Watch_WatchServer) error {
 	}
 
 	// if above loop has exited, it means the stream is closed, so cleanup
+	if cs.metrics != nil {
+		cs.metrics.Watchers.Dec()
+	}
 	w.Cleanup(cs.watchManager, cs.logger)
+	cs.updateWatchMetrics()
 	return err
+}
+
+// updateWatchMetrics refreshes the Watches and WatchMinRevision gauges.
+func (cs *ClientAPIServer) updateWatchMetrics() {
+	if cs.metrics == nil || cs.watchManager == nil {
+		return
+	}
+	cs.metrics.Watches.Set(float64(cs.watchManager.WatchCount()))
+	minRev := cs.watchManager.MinWatchRevision()
+	if minRev >= 0 {
+		cs.metrics.WatchMinRevision.Set(float64(minRev))
+	}
 }

@@ -15,6 +15,8 @@ import (
 	"syscall"
 	"time"
 
+	grpc_prometheus "github.com/grpc-ecosystem/go-grpc-prometheus"
+
 	"github.com/nadrama-com/netsy/internal/bootstrap"
 	"github.com/nadrama-com/netsy/internal/buildvars"
 	"github.com/nadrama-com/netsy/internal/clientapi"
@@ -24,6 +26,7 @@ import (
 	"github.com/nadrama-com/netsy/internal/healthserver"
 	"github.com/nadrama-com/netsy/internal/heartbeat"
 	"github.com/nadrama-com/netsy/internal/localdb"
+	"github.com/nadrama-com/netsy/internal/metrics"
 	"github.com/nadrama-com/netsy/internal/mtls"
 	"github.com/nadrama-com/netsy/internal/node"
 	"github.com/nadrama-com/netsy/internal/nodestate"
@@ -134,11 +137,81 @@ func NewRootCmd() *cobra.Command {
 			fmt.Println("Verbose output ENABLED")
 		}
 
+		// Add cluster_id and node_id as default attributes on all log entries.
+		filteredLogger = filteredLogger.With("cluster_id", c.ClusterID, "node_id", c.NodeID)
+
 		// Initialise node state (Loading / Follower / Replica)
 		state := nodestate.New(filteredLogger)
 
-		// Start HTTP health server
-		healthSrv, err := healthserver.New(filteredLogger, c.BindHealth, state)
+		// Create Prometheus registry and always-on metrics.
+		quorumLabel := "disabled"
+		if c.Replication.Quorum != nil {
+			switch q := *c.Replication.Quorum; {
+			case q == -1:
+				quorumLabel = "majority"
+			case q > 0:
+				quorumLabel = fmt.Sprintf("static:%d", q)
+			}
+		}
+		reg := metrics.NewRegistry()
+		stateMetrics := nodestate.NewStateMetrics(buildvars.BuildVersion(), c.ClusterID, c.NodeID, quorumLabel)
+		stateMetrics.ProcessStartTime.Set(float64(startTime))
+		state.SetMetrics(stateMetrics)
+		retryMetrics := metrics.NewRetryMetrics()
+		compactionMetrics := metrics.NewCompactionMetrics()
+		for _, c := range stateMetrics.Collectors() {
+			reg.MustRegister(c)
+		}
+		for _, c := range retryMetrics.Collectors() {
+			reg.MustRegister(c)
+		}
+		for _, c := range compactionMetrics.Collectors() {
+			reg.MustRegister(c)
+		}
+
+		// Create role groups for Primary, Elector, and Replica metrics.
+		primaryGroup := metrics.NewRoleGroup(func() bool {
+			ps := state.Primary()
+			return ps == nodestate.PrimaryStarting || ps == nodestate.PrimaryActive || ps == nodestate.PrimaryDraining
+		})
+		electorGroup := metrics.NewRoleGroup(func() bool {
+			return state.Elector() == nodestate.ElectorLeader
+		})
+		replicaGroup := metrics.NewRoleGroup(func() bool {
+			return state.Primary() == nodestate.PrimaryReplica
+		})
+		reg.MustRegister(primaryGroup)
+		reg.MustRegister(electorGroup)
+		reg.MustRegister(replicaGroup)
+
+		// Create per-package metrics and register them with role groups.
+		primaryMetrics := primary.NewMetrics()
+		primaryGroup.Add(primaryMetrics.Collectors()...)
+		electorMetrics := elector.NewMetrics()
+		electorGroup.Add(electorMetrics.Collectors()...)
+		clientMetrics := clientapi.NewMetrics()
+		for _, col := range clientMetrics.AlwaysOnCollectors() {
+			reg.MustRegister(col)
+		}
+		replicaMetrics := replication.NewMetrics()
+		replicaGroup.Add(replicaMetrics.Collectors()...)
+		replicaGroup.Add(clientMetrics.ReplicaCollectors()...)
+		storageMetrics := metrics.NewObjectStorageMetrics()
+		for _, col := range storageMetrics.Collectors() {
+			reg.MustRegister(col)
+		}
+		bootstrapMetrics := bootstrap.NewMetrics()
+		for _, col := range bootstrapMetrics.Collectors() {
+			reg.MustRegister(col)
+		}
+
+		// Register gRPC interceptor metrics shared by both Client and Peer servers.
+		grpcMetrics := grpc_prometheus.NewServerMetrics()
+		grpcMetrics.EnableHandlingTimeHistogram()
+		reg.MustRegister(grpcMetrics)
+
+		// Start HTTP health server with /metrics endpoint.
+		healthSrv, err := healthserver.New(filteredLogger, c.BindHealth, state, reg)
 		if err != nil {
 			filteredLogger.Error("Failed to start health server", "error", err)
 			os.Exit(1)
@@ -177,7 +250,7 @@ func NewRootCmd() *cobra.Command {
 		ctx, cancel := context.WithCancel(context.Background())
 		defer cancel()
 
-		// Create object storage client
+		// Create object storage client.
 		storageClient, storageCleanup, err := storage.New(c, filteredLogger)
 		if err != nil {
 			filteredLogger.Error("Failed to create storage client", "error", err)
@@ -192,10 +265,13 @@ func NewRootCmd() *cobra.Command {
 			filteredLogger.Error("db.Connect error", "error", err)
 			jitterWaitThenExit(filteredLogger)
 		}
+		filteredLogger.Info("local_db_initialized", "path", fmt.Sprintf("%s/db.sqlite3", c.DataDir))
 
 		// Construct the snapshot worker early so the Primary server can hold a
 		// stable reference to it during bootstrap and later role transitions.
-		snapshotWorker := snapshot.NewWorker(filteredLogger, c, db, storageClient)
+		snapshotMetrics := snapshot.NewMetrics()
+		primaryGroup.Add(snapshotMetrics.Collectors()...)
+		snapshotWorker := snapshot.NewWorker(filteredLogger, c, db, storageClient, snapshotMetrics, storageMetrics)
 		defer snapshotWorker.Stop()
 
 		// watchManager is shared by the Client API server (watch event
@@ -225,8 +301,12 @@ func NewRootCmd() *cobra.Command {
 			state,
 			peerManager,
 			watchManager,
+			primaryMetrics,
 			c.Replication.HeartbeatInterval.Duration,
 			c.Replication.DegradationCount,
+			compactionMetrics,
+			retryMetrics,
+			storageMetrics,
 		)
 		if err != nil {
 			filteredLogger.Error("Failed to create primary server", "error", err)
@@ -239,12 +319,13 @@ func NewRootCmd() *cobra.Command {
 		// the Elector server can be wired in as the local member lister.
 		electionRunner, err := elector.New(
 			filteredLogger, c, state, storageClient, tlsFiles.ServerCert,
-			startTime, db, peerManager,
+			startTime, db, peerManager, retryMetrics,
 		)
 		if err != nil {
 			filteredLogger.Error("Failed to create election runner", "error", err)
 			jitterWaitThenExit(filteredLogger)
 		}
+		electionRunner.SetMetrics(electorMetrics)
 		if err := electionRunner.Start(ctx); err != nil {
 			filteredLogger.Error("Failed to start election runner", "error", err)
 			jitterWaitThenExit(filteredLogger)
@@ -264,10 +345,12 @@ func NewRootCmd() *cobra.Command {
 				Time:    embed.DefaultGRPCKeepAliveInterval,
 				Timeout: embed.DefaultGRPCKeepAliveTimeout,
 			}),
+			grpc.StreamInterceptor(grpcMetrics.StreamServerInterceptor()),
+			grpc.UnaryInterceptor(grpcMetrics.UnaryServerInterceptor()),
 		}
 		gopts = append(gopts, grpc.Creds(credentials.NewTLS(tlsConfigClientAPI)))
 		grpcServer := grpc.NewServer(gopts...)
-		clientApiServer := clientapi.NewServer(filteredLogger, c, db, grpcServer, primarySrv, peerManager, watchManager, state, electionRunner.ElectorServer())
+		clientApiServer := clientapi.NewServer(filteredLogger, c, db, grpcServer, primarySrv, peerManager, watchManager, state, electionRunner.ElectorServer(), clientMetrics)
 
 		// Wait for first election cycle to know the current Elector
 		electionStatus, err := electionRunner.WaitForFirstElection(ctx)
@@ -313,6 +396,7 @@ func NewRootCmd() *cobra.Command {
 			startTime,
 			c.Elector.HeartbeatInterval.Duration,
 			c.Replication.HeartbeatInterval.Duration,
+			retryMetrics,
 		)
 
 		// Create the replication follower.
@@ -324,6 +408,9 @@ func NewRootCmd() *cobra.Command {
 			db,
 			heartbeatSender,
 			watchManager,
+			replicaMetrics,
+			compactionMetrics,
+			retryMetrics,
 		)
 
 		// Wire Primary self-degradation: when the Primary's elector
@@ -351,6 +438,8 @@ func NewRootCmd() *cobra.Command {
 			peerManager,
 			electionRunner,
 			follower,
+			bootstrapMetrics,
+			storageMetrics,
 		)
 		if err != nil {
 			filteredLogger.Error("bootstrap failed", "error", err)
@@ -373,6 +462,8 @@ func NewRootCmd() *cobra.Command {
 		// Setup and run Peer gRPC server (Elector, Primary, and Node services)
 		peerOpts := []grpc.ServerOption{
 			grpc.Creds(credentials.NewTLS(tlsConfigPeerAPI)),
+			grpc.StreamInterceptor(grpcMetrics.StreamServerInterceptor()),
+			grpc.UnaryInterceptor(grpcMetrics.UnaryServerInterceptor()),
 		}
 		peerGRPCServer := grpc.NewServer(peerOpts...)
 		proto.RegisterElectorServer(peerGRPCServer, electionRunner.ElectorServer())

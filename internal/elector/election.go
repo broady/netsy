@@ -15,6 +15,7 @@ import (
 	"github.com/nadrama-com/s3lect"
 
 	"github.com/nadrama-com/netsy/internal/config"
+	"github.com/nadrama-com/netsy/internal/metrics"
 	"github.com/nadrama-com/netsy/internal/nodestate"
 	"github.com/nadrama-com/netsy/internal/peerclient"
 	"github.com/nadrama-com/netsy/internal/proto"
@@ -50,6 +51,7 @@ func New(
 	localStartTime int64,
 	localDB RevisionSource,
 	peers *peerclient.Manager,
+	retryMetrics *metrics.RetryMetrics,
 ) (*Runner, error) {
 	caCertPEM, err := os.ReadFile(cfg.TLSCACert)
 	if err != nil {
@@ -121,9 +123,18 @@ func New(
 		quorum,
 		cfg.Elector.PrimaryPriorTimeout.Duration,
 		peers,
+		nil,
+		retryMetrics,
 	)
 
 	return r, nil
+}
+
+// SetMetrics sets the Elector metrics on the underlying server. This
+// is called after construction because the Runner is created before
+// the metrics registry is available.
+func (r *Runner) SetMetrics(m *Metrics) {
+	r.server.metrics = m
 }
 
 // Start begins the election health server and the s3lect election loop.

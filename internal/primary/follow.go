@@ -106,10 +106,16 @@ func (s *Server) Follow(stream proto.Primary_FollowServer) error {
 	// Register the replica in the health tracker and the follow streams.
 	s.replicas.Add(nodeID)
 	session := s.addFollowStream(nodeID)
+	if s.metrics != nil {
+		s.metrics.ReplicationStreams.Inc()
+	}
 
 	defer func() {
 		s.removeFollowStream(nodeID, session)
 		s.replicas.Remove(nodeID)
+		if s.metrics != nil {
+			s.metrics.ReplicationStreams.Dec()
+		}
 		logger.Info("follow stream closed")
 	}()
 

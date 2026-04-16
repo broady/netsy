@@ -27,7 +27,7 @@ func newTestServer(heartbeatInterval time.Duration, degradationCount int) *Serve
 		0, // deregTimeout
 		heartbeatInterval,
 		degradationCount,
-		"test-node", 0, nil, 0, 0, mgr,
+		"test-node", 0, nil, 0, 0, mgr, nil, nil,
 	)
 }
 
@@ -130,7 +130,7 @@ func TestCheckNodeHealthDeregistersAfterTimeout(t *testing.T) {
 		100*time.Millisecond, // deregTimeout
 		50*time.Millisecond,
 		2,
-		"test-node", 0, nil, 0, 0, mgr,
+		"test-node", 0, nil, 0, 0, mgr, nil, nil,
 	)
 	srv.nodeMap.SetReady()
 
@@ -162,7 +162,7 @@ func TestCheckNodeHealthKeepsDegradedBeforeTimeout(t *testing.T) {
 		time.Hour, // deregTimeout — far in the future
 		50*time.Millisecond,
 		2,
-		"test-node", 0, nil, 0, 0, mgr,
+		"test-node", 0, nil, 0, 0, mgr, nil, nil,
 	)
 	srv.nodeMap.SetReady()
 
@@ -230,7 +230,7 @@ func TestCheckNodeHealthClearsPrimaryOnDeregistration(t *testing.T) {
 		100*time.Millisecond, // deregTimeout
 		50*time.Millisecond,
 		2,
-		"test-node", 0, nil, 0, 0, mgr,
+		"test-node", 0, nil, 0, 0, mgr, nil, nil,
 	)
 	srv.nodeMap.SetReady()
 

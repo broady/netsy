@@ -27,7 +27,7 @@ func TestSendHeartbeatUpdatesNodeState(t *testing.T) {
 		0,
 		time.Second,
 		2,
-		"", 0, nil, 0, 0, nil,
+		"", 0, nil, 0, 0, nil, nil, nil,
 	)
 	srv.nodeMap.SetReady()
 	srv.nodeMap.Add(NodeEntry{
@@ -74,7 +74,7 @@ func TestSendHeartbeatRejectsNonLeader(t *testing.T) {
 		0,
 		time.Second,
 		2,
-		"", 0, nil, 0, 0, nil,
+		"", 0, nil, 0, 0, nil, nil, nil,
 	)
 
 	_, err := srv.SendHeartbeat(context.Background(), &proto.NodeState{
@@ -97,7 +97,7 @@ func TestSendHeartbeatRejectsUnknownNode(t *testing.T) {
 		0,
 		time.Second,
 		2,
-		"", 0, nil, 0, 0, nil,
+		"", 0, nil, 0, 0, nil, nil, nil,
 	)
 
 	_, err := srv.SendHeartbeat(context.Background(), &proto.NodeState{

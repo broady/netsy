@@ -16,8 +16,9 @@ import (
 
 	"github.com/nadrama-com/netsy/internal/config"
 	"github.com/nadrama-com/netsy/internal/datafile"
-	"github.com/nadrama-com/netsy/internal/localdb"
 	"github.com/nadrama-com/netsy/internal/datastore"
+	"github.com/nadrama-com/netsy/internal/localdb"
+	"github.com/nadrama-com/netsy/internal/metrics"
 	"github.com/nadrama-com/netsy/internal/proto"
 	"github.com/nadrama-com/netsy/internal/storage"
 )
@@ -48,23 +49,28 @@ type Worker struct {
 	// Prevents concurrent snapshot creation
 	snapshotMutex sync.Mutex
 
+	metrics        *Metrics
+	storageMetrics *metrics.ObjectStorageMetrics
+
 	// Context for shutdown
 	ctx    context.Context
 	cancel context.CancelFunc
 }
 
 // NewWorker creates a new snapshot worker
-func NewWorker(logger *slog.Logger, config *config.Config, db localdb.Database, storageClient storage.ObjectStorage) *Worker {
+func NewWorker(logger *slog.Logger, config *config.Config, db localdb.Database, storageClient storage.ObjectStorage, snapshotMetrics *Metrics, storageMetrics *metrics.ObjectStorageMetrics) *Worker {
 	ctx, cancel := context.WithCancel(context.Background())
 
 	return &Worker{
-		logger:        logger,
-		config:        config,
-		db:            db,
-		storageClient: storageClient,
-		requestCh:     make(chan SnapshotRequest, 100), // Buffered channel to avoid blocking
-		ctx:           ctx,
-		cancel:        cancel,
+		logger:         logger,
+		config:         config,
+		db:             db,
+		storageClient:  storageClient,
+		requestCh:      make(chan SnapshotRequest, 100), // Buffered channel to avoid blocking
+		metrics:        snapshotMetrics,
+		storageMetrics: storageMetrics,
+		ctx:            ctx,
+		cancel:         cancel,
 	}
 }
 
@@ -197,17 +203,20 @@ func (w *Worker) createSnapshot(upToRevision int64) {
 	w.snapshotMutex.Lock()
 	defer w.snapshotMutex.Unlock()
 
+	snapshotStart := time.Now()
 	w.logger.Info("starting snapshot creation", "up_to_revision", upToRevision)
 
 	// Get all non-compacted records up to the specified revision
 	records, err := w.db.FindAllRecordsForSnapshot(upToRevision)
 	if err != nil {
 		w.logger.Error("failed to get records for snapshot", "error", err)
+		w.observeSnapshot("error", snapshotStart)
 		return
 	}
 
 	if len(records) == 0 {
 		w.logger.Warn("no records found for snapshot", "up_to_revision", upToRevision)
+		w.observeSnapshot("error", snapshotStart)
 		return
 	}
 
@@ -215,6 +224,7 @@ func (w *Worker) createSnapshot(upToRevision int64) {
 	tempFile, err := os.CreateTemp(w.config.DataDir, fmt.Sprintf("snapshot_%d_*.netsy", upToRevision))
 	if err != nil {
 		w.logger.Error("failed to create temporary snapshot file", "error", err)
+		w.observeSnapshot("error", snapshotStart)
 		return
 	}
 	tempFilePath := tempFile.Name()
@@ -230,6 +240,7 @@ func (w *Worker) createSnapshot(upToRevision int64) {
 	err = w.writeSnapshotFile(tempFile, records, upToRevision)
 	if err != nil {
 		w.logger.Error("failed to write snapshot file", "temp_file", tempFilePath, "error", err)
+		w.observeSnapshot("error", snapshotStart)
 		return
 	}
 	w.logger.Debug("snapshot file written successfully", "temp_file", tempFilePath)
@@ -242,9 +253,18 @@ func (w *Worker) createSnapshot(upToRevision int64) {
 
 	w.logger.Info("uploading snapshot to object storage", "key", snapshotKey, "file_path", tempFilePath)
 
+	var uploadBytes int64
+	if fi, statErr := os.Stat(tempFilePath); statErr == nil {
+		uploadBytes = fi.Size()
+	}
+	uploadStart := time.Now()
 	err = datastore.Upload(w.ctx, w.storageClient, snapshotKey, tempFilePath)
+	if w.storageMetrics != nil {
+		w.storageMetrics.ObserveWrite("snapshot", "sync", uploadBytes, time.Since(uploadStart), err)
+	}
 	if err != nil {
 		w.logger.Error("failed to upload snapshot to object storage", "key", snapshotKey, "file_path", tempFilePath, "error", err)
+		w.observeSnapshot("error", snapshotStart)
 		return
 	}
 
@@ -272,6 +292,20 @@ func (w *Worker) createSnapshot(upToRevision int64) {
 
 	w.logger.Info("chunk file cleanup completed",
 		"up_to_revision", upToRevision, "deleted_chunks", deletedCount)
+
+	w.observeSnapshot("success", snapshotStart)
+}
+
+// observeSnapshot records snapshot creation metrics when metrics are configured.
+func (w *Worker) observeSnapshot(result string, start time.Time) {
+	if w.metrics == nil {
+		return
+	}
+	w.metrics.Creations.WithLabelValues(result).Inc()
+	w.metrics.CreateDur.WithLabelValues(result).Observe(time.Since(start).Seconds())
+	if result == "success" {
+		w.metrics.Age.MarkCreated()
+	}
 }
 
 // writeSnapshotFile writes records to a snapshot file using the datafile writer

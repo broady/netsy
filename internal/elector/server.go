@@ -16,6 +16,7 @@ import (
 	"google.golang.org/protobuf/types/known/emptypb"
 
 	"github.com/nadrama-com/netsy/internal/discovery"
+	"github.com/nadrama-com/netsy/internal/metrics"
 	"github.com/nadrama-com/netsy/internal/nodestate"
 	"github.com/nadrama-com/netsy/internal/peerclient"
 	"github.com/nadrama-com/netsy/internal/proto"
@@ -53,6 +54,9 @@ type Server struct {
 	// that checkPreviousPrimary can contact it for a drain check even
 	// after the Primary has been cleared from ClusterState.
 	previousPrimary nodestate.NodeInfo
+
+	metrics      *Metrics
+	retryMetrics *metrics.RetryMetrics
 }
 
 // NewServer creates a new Elector gRPC server.
@@ -70,6 +74,8 @@ func NewServer(
 	quorum int,
 	primaryPriorTimeout time.Duration,
 	peers *peerclient.Manager,
+	m *Metrics,
+	retryMetrics *metrics.RetryMetrics,
 ) *Server {
 	return &Server{
 		logger:              logger,
@@ -86,6 +92,8 @@ func NewServer(
 		quorum:              quorum,
 		primaryPriorTimeout: primaryPriorTimeout,
 		peers:               peers,
+		metrics:             m,
+		retryMetrics:        retryMetrics,
 	}
 }
 
@@ -102,12 +110,13 @@ func (s *Server) RegisterNode(ctx context.Context, req *proto.RegisterNodeReques
 		return nil, status.Error(codes.Unavailable, "elector is still bootstrapping")
 	}
 
-	s.logger.Info("registering node",
+	s.logger.Debug("registering node",
 		"node_id", req.GetNodeId(),
 		"client_addr", req.GetClientAdvertiseAddress(),
 		"peer_addr", req.GetPeerAdvertiseAddress(),
 	)
 
+	regStart := time.Now()
 	memberID, err := s.allocateOrReuseMemberID(ctx, req.GetNodeId())
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "failed to allocate member_id: %v", err)
@@ -125,6 +134,13 @@ func (s *Server) RegisterNode(ctx context.Context, req *proto.RegisterNodeReques
 	cs := s.state.ClusterState()
 	cs.NodeCount = s.nodeMap.Count()
 	protoCS := nodestate.ClusterStateToProto(cs)
+
+	s.logger.Info("node_registered",
+		"target_node_id", req.GetNodeId(),
+		"member_id", memberID,
+		"trigger", "direct",
+		"duration_ms", time.Since(regStart).Milliseconds(),
+	)
 
 	return &proto.RegisterNodeResponse{
 		MemberId:     memberID,
@@ -144,7 +160,19 @@ func (s *Server) DeregisterNode(ctx context.Context, req *proto.DeregisterNodeRe
 	}
 
 	nodeID := req.GetNodeId()
-	s.logger.Info("deregistering node", "node_id", nodeID)
+
+	entry, hasMember := s.nodeMap.Get(nodeID)
+	var memberID uint64
+	if hasMember {
+		memberID = entry.MemberID
+	}
+
+	s.logger.Info("node_deregistered",
+		"target_node_id", nodeID,
+		"member_id", memberID,
+		"trigger", "direct",
+		"reason", "shutdown",
+	)
 
 	s.nodeMap.MarkDeregistered(nodeID)
 	s.nodeMap.Remove(nodeID)
@@ -228,7 +256,6 @@ func (s *Server) GetMemberList(_ context.Context, _ *proto.GetMemberListRequest)
 // is written back with a conditional write and retried on precondition failure.
 func (s *Server) allocateOrReuseMemberID(ctx context.Context, nodeID string) (memberID uint64, err error) {
 	const maxRetries = 5
-
 	for attempt := range maxRetries {
 		mf, err := discovery.ReadMembersFile(ctx, s.store)
 		if err != nil {
@@ -244,6 +271,9 @@ func (s *Server) allocateOrReuseMemberID(ctx context.Context, nodeID string) (me
 
 		if err := discovery.WriteMembersFile(ctx, s.store, mf); err != nil {
 			if errors.Is(err, storage.ErrPrecondition) {
+				if s.retryMetrics != nil {
+					s.retryMetrics.Inc("node_registration")
+				}
 				s.logger.Info("members.json write conflict, retrying",
 					"attempt", attempt+1,
 					"node_id", nodeID,

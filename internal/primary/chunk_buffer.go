@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/nadrama-com/netsy/internal/datastore"
+	"github.com/nadrama-com/netsy/internal/metrics"
 	"github.com/nadrama-com/netsy/internal/nodestate"
 	"github.com/nadrama-com/netsy/internal/proto"
 	"github.com/nadrama-com/netsy/internal/storage"
@@ -43,6 +44,8 @@ type chunkBuffer struct {
 	flushing       bool
 	thresholdBytes int64
 	thresholdAge   time.Duration
+	metrics        *Metrics
+	storageMetrics *metrics.ObjectStorageMetrics
 }
 
 func newChunkBuffer(
@@ -52,6 +55,7 @@ func newChunkBuffer(
 	leaderID string,
 	thresholdSizeMB int,
 	thresholdAgeMinutes int,
+	storageMetrics *metrics.ObjectStorageMetrics,
 ) *chunkBuffer {
 	return &chunkBuffer{
 		logger:         logger,
@@ -60,6 +64,7 @@ func newChunkBuffer(
 		leaderID:       leaderID,
 		thresholdBytes: int64(thresholdSizeMB) * 1024 * 1024,
 		thresholdAge:   time.Duration(thresholdAgeMinutes) * time.Minute,
+		storageMetrics: storageMetrics,
 	}
 }
 
@@ -77,6 +82,10 @@ func (b *chunkBuffer) bufferRecord(ctx context.Context, record *proto.Record) er
 	b.records = append(b.records, record)
 	b.bytes += int64(googlepb.Size(record))
 	full := b.thresholdBytes > 0 && b.bytes >= b.thresholdBytes
+	if b.metrics != nil {
+		b.metrics.ChunkBufferRecords.Set(float64(len(b.records)))
+		b.metrics.ChunkBufferBytes.Set(float64(b.bytes))
+	}
 	b.mu.Unlock()
 
 	if !full {
@@ -96,6 +105,24 @@ func (b *chunkBuffer) bufferRecord(ctx context.Context, record *proto.Record) er
 	return nil
 }
 
+// setMetrics sets the Primary metrics reference used by flush to record
+// chunk buffer flush counters and histograms.
+func (b *chunkBuffer) setMetrics(m *Metrics) {
+	b.mu.Lock()
+	b.metrics = m
+	b.mu.Unlock()
+	if m != nil {
+		m.ChunkBufferAge.SetFunc(func() float64 {
+			b.mu.Lock()
+			defer b.mu.Unlock()
+			if len(b.records) > 0 && !b.oldestAt.IsZero() {
+				return time.Since(b.oldestAt).Seconds()
+			}
+			return 0
+		})
+	}
+}
+
 // flush uploads the current chunk buffer as one chunk file. When a flush is
 // already in progress or the buffer is empty, it returns immediately.
 func (b *chunkBuffer) flush(ctx context.Context, trigger string) error {
@@ -113,7 +140,8 @@ func (b *chunkBuffer) flush(ctx context.Context, trigger string) error {
 	firstRevision := records[0].GetRevision()
 	lastRevision := records[len(records)-1].GetRevision()
 
-	b.logger.Info("chunk buffer flush started",
+	flushStart := time.Now()
+	b.logger.Info("chunk_buffer_flush_started",
 		"trigger", trigger,
 		"records", len(records),
 		"bytes", batchBytes,
@@ -128,7 +156,11 @@ func (b *chunkBuffer) flush(ctx context.Context, trigger string) error {
 		b.mu.Unlock()
 		return err
 	}
+	uploadStart := time.Now()
 	err = storage.PutIfAbsent(ctx, b.storageClient, key, data)
+	if b.storageMetrics != nil {
+		b.storageMetrics.ObserveWrite("chunk", "async", int64(len(data)), time.Since(uploadStart), err)
+	}
 
 	b.mu.Lock()
 	b.flushing = false
@@ -141,27 +173,45 @@ func (b *chunkBuffer) flush(ctx context.Context, trigger string) error {
 		if len(b.records) == 0 {
 			b.oldestAt = time.Time{}
 		}
+		if b.metrics != nil {
+			b.metrics.ChunkBufferRecords.Set(float64(len(b.records)))
+			b.metrics.ChunkBufferBytes.Set(float64(b.bytes))
+		}
 	}
 	b.mu.Unlock()
 
+	flushDuration := time.Since(flushStart).Seconds()
 	if err != nil {
-		b.logger.Warn("chunk buffer flush failed",
+		if b.metrics != nil {
+			b.metrics.ChunkBufferFlushes.WithLabelValues(trigger, "error").Inc()
+			b.metrics.ChunkBufferFlushDur.WithLabelValues(trigger, "error").Observe(flushDuration)
+		}
+		b.logger.Warn("chunk_buffer_flush_completed",
 			"trigger", trigger,
+			"result", "error",
 			"records", len(records),
 			"bytes", batchBytes,
 			"first_revision", firstRevision,
 			"last_revision", lastRevision,
+			"duration_ms", int64(flushDuration*1000),
 			"error", err,
 		)
 		return err
 	}
 
-	b.logger.Info("chunk buffer flush completed",
+	if b.metrics != nil {
+		b.metrics.ChunkBufferFlushes.WithLabelValues(trigger, "success").Inc()
+		b.metrics.ChunkBufferFlushDur.WithLabelValues(trigger, "success").Observe(flushDuration)
+		b.metrics.ObjectStorageRevision.Set(float64(lastRevision))
+	}
+	b.logger.Info("chunk_buffer_flush_completed",
 		"trigger", trigger,
+		"result", "success",
 		"records", len(records),
 		"bytes", batchBytes,
 		"first_revision", firstRevision,
 		"last_revision", lastRevision,
+		"duration_ms", int64(flushDuration*1000),
 	)
 
 	return nil

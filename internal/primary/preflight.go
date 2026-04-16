@@ -59,9 +59,15 @@ func (s *Server) runPreflight(ctx context.Context, runID uint64) {
 			return
 		}
 
+		s.logger.Info("primary_preflight_stage_started", "stage", "preflight")
+		stageStart := time.Now()
 		err := s.runPreflightPass(ctx)
 		switch {
 		case err == nil:
+			if s.metrics != nil {
+				s.metrics.PreflightStageDur.WithLabelValues("preflight", "success").Observe(time.Since(stageStart).Seconds())
+			}
+			s.logger.Info("primary_preflight_stage_completed", "stage", "preflight", "result", "success", "duration_ms", time.Since(stageStart).Milliseconds())
 			if err := s.state.SetPrimary(nodestate.PrimaryActive); err != nil {
 				s.logger.Error("failed to transition primary to active after preflight", "error", err)
 			}
@@ -69,8 +75,14 @@ func (s *Server) runPreflight(ctx context.Context, runID uint64) {
 		case errors.Is(err, context.Canceled), errors.Is(err, errPreflightStopped):
 			return
 		default:
-			s.logger.Warn("primary preflight attempt failed; retrying",
+			if s.metrics != nil {
+				s.metrics.PreflightStageDur.WithLabelValues("preflight", "error").Observe(time.Since(stageStart).Seconds())
+			}
+			s.logger.Warn("primary_preflight_stage_completed",
+				"stage", "preflight",
+				"result", "error",
 				"error", err,
+				"duration_ms", time.Since(stageStart).Milliseconds(),
 				"retry_delay", preflightRetryDelay,
 			)
 		}
@@ -137,9 +149,14 @@ func (s *Server) runPreflightPass(ctx context.Context) error {
 			chunk.Key,
 			chunk.Size,
 			pb.FileKind_KIND_CHUNK,
+			s.storageMetrics,
 		); err != nil {
 			return fmt.Errorf("import chunk %s during primary preflight: %w", chunk.Key, err)
 		}
+	}
+
+	if s.metrics != nil {
+		s.metrics.ObjectStorageRevision.Set(float64(durableRevision))
 	}
 
 	records, err := s.db.FindRecordsAfterRevision(durableRevision)
