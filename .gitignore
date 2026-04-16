@@ -1,10 +1,11 @@
-# Copyright 2025 Nadrama Pty Ltd
+# Copyright 2026 Nadrama Pty Ltd
 # SPDX-License-Identifier: Apache-2.0
 
 /certs
 /temp
 /default.etcd
 *.netsy
+.overmind.sock
 
 # etcd
 default.etcd/

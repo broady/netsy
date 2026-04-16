@@ -1,134 +1,174 @@
 #!/usr/bin/env bash
-# Copyright 2025 Nadrama Pty Ltd
+# Copyright 2026 Nadrama Pty Ltd
 # SPDX-License-Identifier: Apache-2.0
+#
+# Generates development TLS certificates for local Netsy development.
+# Certificates follow the TLS requirements documented in docs/deployment/tls.md.
+#
+# Usage: ./scripts/certs.sh
+#
+# Generated files in temp/certs/:
+#
+#   File                  OU      CN           Purpose
+#   ─────────────────────────────────────────────────────────────────────
+#   ca.crt / ca.key       —       dev-cluster  Cluster CA (signs all certs)
+#   server.crt / .key     peer    dev-node     Node gRPC server (Client, Peer, election APIs)
+#   peer.crt / .key       peer    dev-node     Node connecting to other Nodes' Peer API
+#   client.crt / .key     client  etcd-client  External tools (etcdctl, kube-apiserver)
+#   service-account.key   —       —            Kubernetes service account signing key
+#
 set -eo pipefail
 
 CURRENT=$(dirname "$(readlink -f "$0")")
-CERTS_DIR="${CURRENT}/../certs"
+CERTS_DIR="${CURRENT}/../temp/certs"
 
-# check if openssl command exists
-command -v openssl >/dev/null 2>&1 || { echo >&2 "openssl is required but it's not installed.  Aborting."; exit 1; }
+CLUSTER_ID="dev-cluster"
+NODE_ID="dev-node"
+DAYS_CA=3650
+DAYS_CERT=365
 
-# check that no certs dir exists
+# Idempotent: skip if certs already exist
 if [ -d "${CERTS_DIR}" ]; then
-    echo >&2 "certs directory already exists (${CERTS_DIR}). Aborting."
-    exit 1
+    echo "Development certificates already exist in temp/certs/."
+    echo "To regenerate, run: rm -rf temp/certs/"
+    exit 0
 fi
+
+command -v openssl >/dev/null 2>&1 || { echo >&2 "openssl is required but not installed. Aborting."; exit 1; }
+
 mkdir -p "${CERTS_DIR}"
 
-# generate certificates required to run netsy and kube-apiserver
-# note that we are using Ed25519 keys
-# generate Ed25519 keys for netsy and kube-apiserver
-KEYS=(
-    ca
-    netsy.server
-    netsy.client
-    kube-apiserver.client
-    kubectl.client
-)
-for item in "${KEYS[@]}"; do
-    CMD="openssl genpkey -algorithm Ed25519 -out ${CERTS_DIR}/${item}.key"
-    echo "${CMD}"
-    ${CMD}
-done
+echo "Generating development TLS certificates..."
+echo "  Cluster ID: ${CLUSTER_ID}"
+echo "  Node ID:    ${NODE_ID}"
+echo ""
 
-# generate a service account key - note that Ed25519 is not supported
-openssl genrsa -out "${CERTS_DIR}/service-account.key" 2048
-
-# Generate CA certificate
-echo "Generating CA certificate..."
-openssl req -new -x509 \
+# --- CA (RSA 4096, self-signed) ---
+echo "Generating CA key and certificate..."
+openssl genrsa -out "${CERTS_DIR}/ca.key" 4096 2>/dev/null
+openssl req -x509 -new -nodes \
     -key "${CERTS_DIR}/ca.key" \
+    -sha256 \
+    -days ${DAYS_CA} \
     -out "${CERTS_DIR}/ca.crt" \
-    -days 3650 \
-    -subj "/CN=Netsy CA"
+    -subj "/O=${CLUSTER_ID}/CN=${CLUSTER_ID}-ca"
 
-# Generate netsy server certificate with SAN
-echo "Generating netsy server certificate..."
-openssl req -new \
-    -key "${CERTS_DIR}/netsy.server.key" \
-    -out "${CERTS_DIR}/netsy.server.csr" \
-    -subj "/CN=netsy-server"
-
-# Create config for SAN
-cat > "${CERTS_DIR}/netsy.server.conf" << EOF
+# --- Server certificate (O=cluster, OU=peer, CN=node) ---
+echo "Generating server certificate..."
+cat > "${CERTS_DIR}/server.cnf" <<EOF
 [req]
-distinguished_name = req_distinguished_name
+distinguished_name = req_dn
 req_extensions = v3_req
+prompt = no
 
-[req_distinguished_name]
+[req_dn]
+O = ${CLUSTER_ID}
+OU = peer
+CN = ${NODE_ID}
 
 [v3_req]
-basicConstraints = CA:FALSE
-keyUsage = nonRepudiation, digitalSignature, keyEncipherment
+keyUsage = digitalSignature, keyEncipherment
+extendedKeyUsage = serverAuth
 subjectAltName = @alt_names
 
 [alt_names]
 DNS.1 = localhost
 DNS.2 = host.containers.internal
 IP.1 = 127.0.0.1
+IP.2 = ::1
 EOF
 
+openssl genrsa -out "${CERTS_DIR}/server.key" 4096 2>/dev/null
+openssl req -new \
+    -key "${CERTS_DIR}/server.key" \
+    -out "${CERTS_DIR}/server.csr" \
+    -config "${CERTS_DIR}/server.cnf"
 openssl x509 -req \
-    -in "${CERTS_DIR}/netsy.server.csr" \
+    -in "${CERTS_DIR}/server.csr" \
     -CA "${CERTS_DIR}/ca.crt" \
     -CAkey "${CERTS_DIR}/ca.key" \
     -CAcreateserial \
-    -out "${CERTS_DIR}/netsy.server.crt" \
-    -days 365 \
-    -not_before "$(date -u -v-1H '+%y%m%d%H%M%SZ')" \
+    -out "${CERTS_DIR}/server.crt" \
+    -days ${DAYS_CERT} \
+    -sha256 \
     -extensions v3_req \
-    -extfile "${CERTS_DIR}/netsy.server.conf"
+    -extfile "${CERTS_DIR}/server.cnf"
 
-# Generate netsy.client client certificate
-echo "Generating netsy client certificate..."
+# --- Peer client certificate (O=cluster, OU=peer, CN=node) ---
+echo "Generating peer client certificate..."
+cat > "${CERTS_DIR}/peer.cnf" <<EOF
+[req]
+distinguished_name = req_dn
+req_extensions = v3_req
+prompt = no
+
+[req_dn]
+O = ${CLUSTER_ID}
+OU = peer
+CN = ${NODE_ID}
+
+[v3_req]
+keyUsage = digitalSignature
+extendedKeyUsage = clientAuth
+EOF
+
+openssl genrsa -out "${CERTS_DIR}/peer.key" 4096 2>/dev/null
 openssl req -new \
-    -key "${CERTS_DIR}/netsy.client.key" \
-    -out "${CERTS_DIR}/netsy.client.csr" \
-    -subj "/CN=netsy.client"
-
+    -key "${CERTS_DIR}/peer.key" \
+    -out "${CERTS_DIR}/peer.csr" \
+    -config "${CERTS_DIR}/peer.cnf"
 openssl x509 -req \
-    -in "${CERTS_DIR}/netsy.client.csr" \
+    -in "${CERTS_DIR}/peer.csr" \
     -CA "${CERTS_DIR}/ca.crt" \
     -CAkey "${CERTS_DIR}/ca.key" \
     -CAcreateserial \
-    -out "${CERTS_DIR}/netsy.client.crt" \
-    -days 365 \
-    -not_before "$(date -u -v-1H '+%y%m%d%H%M%SZ')"
+    -out "${CERTS_DIR}/peer.crt" \
+    -days ${DAYS_CERT} \
+    -sha256 \
+    -extensions v3_req \
+    -extfile "${CERTS_DIR}/peer.cnf"
 
-# Generate kube-apiserver client certificate
-echo "Generating kube-apiserver client certificate..."
+# --- External client certificate (O=cluster, OU=client, CN=etcd-client) ---
+echo "Generating client certificate..."
+cat > "${CERTS_DIR}/client.cnf" <<EOF
+[req]
+distinguished_name = req_dn
+req_extensions = v3_req
+prompt = no
+
+[req_dn]
+O = ${CLUSTER_ID}
+OU = client
+CN = etcd-client
+
+[v3_req]
+keyUsage = digitalSignature
+extendedKeyUsage = clientAuth
+EOF
+
+openssl genrsa -out "${CERTS_DIR}/client.key" 4096 2>/dev/null
 openssl req -new \
-    -key "${CERTS_DIR}/kube-apiserver.client.key" \
-    -out "${CERTS_DIR}/kube-apiserver.client.csr" \
-    -subj "/CN=kube-apiserver"
-
+    -key "${CERTS_DIR}/client.key" \
+    -out "${CERTS_DIR}/client.csr" \
+    -config "${CERTS_DIR}/client.cnf"
 openssl x509 -req \
-    -in "${CERTS_DIR}/kube-apiserver.client.csr" \
+    -in "${CERTS_DIR}/client.csr" \
     -CA "${CERTS_DIR}/ca.crt" \
     -CAkey "${CERTS_DIR}/ca.key" \
     -CAcreateserial \
-    -out "${CERTS_DIR}/kube-apiserver.client.crt" \
-    -days 365 \
-    -not_before "$(date -u -v-1H '+%y%m%d%H%M%SZ')"
+    -out "${CERTS_DIR}/client.crt" \
+    -days ${DAYS_CERT} \
+    -sha256 \
+    -extensions v3_req \
+    -extfile "${CERTS_DIR}/client.cnf"
 
-# Generate kubectl client certificate with system:masters group
-echo "Generating kubectl client certificate..."
-openssl req -new \
-    -key "${CERTS_DIR}/kubectl.client.key" \
-    -out "${CERTS_DIR}/kubectl.client.csr" \
-    -subj "/CN=kubectl-admin/O=system:masters"
+# --- Service account key (RSA 2048, Ed25519 not supported by K8s) ---
+echo "Generating service account key..."
+openssl genrsa -out "${CERTS_DIR}/service-account.key" 2048 2>/dev/null
 
-openssl x509 -req \
-    -in "${CERTS_DIR}/kubectl.client.csr" \
-    -CA "${CERTS_DIR}/ca.crt" \
-    -CAkey "${CERTS_DIR}/ca.key" \
-    -CAcreateserial \
-    -out "${CERTS_DIR}/kubectl.client.crt" \
-    -days 365 \
-    -not_before "$(date -u -v-1H '+%y%m%d%H%M%SZ')"
+# Clean up temporary files
+rm -f "${CERTS_DIR}"/*.csr "${CERTS_DIR}"/*.cnf "${CERTS_DIR}"/*.srl
 
-# Clean up CSR files and config
-rm "${CERTS_DIR}/netsy.server.csr" "${CERTS_DIR}/kube-apiserver.client.csr" "${CERTS_DIR}/kubectl.client.csr" "${CERTS_DIR}/netsy.server.conf"
-
-echo "Certificates generated successfully in ${CERTS_DIR}/"
+echo ""
+echo "Development certificates generated in temp/certs/:"
+ls -1 "${CERTS_DIR}"

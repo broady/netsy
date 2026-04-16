@@ -1,16 +1,18 @@
-# Config file for [Air](https://github.com/air-verse/air) in TOML format
-# Created using 'air init'
+# Copyright 2026 Nadrama Pty Ltd
+# SPDX-License-Identifier: Apache-2.0
+#
+# Config file for Air (https://github.com/air-verse/air)
 
 root = "."
 testdata_dir = "testdata"
-tmp_dir = "tmp"
+tmp_dir = "temp/air"
 
 [build]
 args_bin = []
 bin = "./bin/netsy"
 cmd = "go build -o ./bin/netsy ./cmd/netsy"
 delay = 1000
-exclude_dir = ["bin", "assets", "tmp", "vendor", "testdata"]
+exclude_dir = ["bin", "assets", "temp", "vendor", "testdata"]
 exclude_file = []
 exclude_regex = ["_test.go"]
 exclude_unchanged = false

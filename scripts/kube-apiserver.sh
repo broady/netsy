@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Copyright 2025 Nadrama Pty Ltd
+# Copyright 2026 Nadrama Pty Ltd
 # SPDX-License-Identifier: Apache-2.0
 set -eo pipefail
 
@@ -16,17 +16,17 @@ CONTAINER_NAME=kube-apiserver
 trap "docker stop $CONTAINER_NAME >/dev/null; docker rm $CONTAINER_NAME >/dev/null; exit" INT
 docker run -d --name $CONTAINER_NAME \
   --entrypoint kube-apiserver \
-  -v "${CURRENT}/../certs:/opt/netsy-certs:ro" \
+  -v "${CURRENT}/../temp/certs:/opt/netsy-certs:ro" \
   -p 8080:8080 \
   -p 6443:6443 \
   registry.k8s.io/kube-apiserver:$VERSION \
   --etcd-servers=https://host.containers.internal:2378 \
-  --etcd-certfile=/opt/netsy-certs/kube-apiserver.client.crt \
-  --etcd-keyfile=/opt/netsy-certs/kube-apiserver.client.key \
+  --etcd-certfile=/opt/netsy-certs/client.crt \
+  --etcd-keyfile=/opt/netsy-certs/client.key \
   --etcd-cafile=/opt/netsy-certs/ca.crt \
   --client-ca-file=/opt/netsy-certs/ca.crt \
-  --tls-cert-file=/opt/netsy-certs/netsy.server.crt \
-  --tls-private-key-file=/opt/netsy-certs/netsy.server.key \
+  --tls-cert-file=/opt/netsy-certs/server.crt \
+  --tls-private-key-file=/opt/netsy-certs/server.key \
   --service-cluster-ip-range=10.0.0.0/24 \
   --service-account-issuer=https://kubernetes.default.svc \
   --service-account-signing-key-file=/opt/netsy-certs/service-account.key \

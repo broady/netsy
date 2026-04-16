@@ -222,8 +222,8 @@ export NETSY_NODE_ID="node-1"
 export NETSY_TLS_CA_CERT=./certs/ca.crt
 export NETSY_TLS_SERVER_CERT=./certs/server.crt
 export NETSY_TLS_SERVER_KEY=./certs/server.key
-export NETSY_TLS_CLIENT_CERT=./certs/client.crt
-export NETSY_TLS_CLIENT_KEY=./certs/client.key
+export NETSY_TLS_CLIENT_CERT=./certs/peer.crt
+export NETSY_TLS_CLIENT_KEY=./certs/peer.key
 ```
 
 Per-cluster config file (see [Configuration](config.md) for the full reference):

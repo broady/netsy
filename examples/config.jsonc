@@ -1,0 +1,47 @@
+// Copyright 2026 Nadrama Pty Ltd
+// SPDX-License-Identifier: Apache-2.0
+//
+// Example Netsy cluster config file for local development.
+// See docs/deployment/config.md for the full configuration reference.
+{
+  // Cluster identity — must match the Organization (O) field in TLS certificates
+  "cluster_id": "dev-cluster",
+
+  // Object storage configuration
+  "storage": {
+    "provider": "s3",
+    "bucket_name": "netsy-dev",
+    "key_prefix": "",
+    "class": "STANDARD",
+    "encryption": "provider-managed"
+  },
+
+  // Elector leader election and node lifecycle
+  "elector": {
+    "heartbeat_interval": "1s",
+    "degradation_count": 2,
+    "deregistration_timeout": "3m",
+    "primary_prior_timeout": "5s"
+  },
+
+  // Replication stream between Primary and Replicas
+  "replication": {
+    "quorum": 0,
+    "heartbeat_interval": "500ms",
+    "degradation_count": 2,
+    "chunk_buffer": {
+      "threshold_size_mb": 4,
+      "threshold_age_minutes": 1
+    }
+  },
+
+  // Snapshot creation thresholds
+  "snapshot": {
+    "threshold_records": 10000,
+    "threshold_size_mb": 10000,
+    "threshold_age_minutes": 0
+  },
+
+  // How often the Primary schedules compaction across all Nodes
+  "compaction_interval": "5m"
+}

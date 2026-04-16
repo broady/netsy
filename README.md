@@ -54,7 +54,7 @@ Run:
 ./bin/netsy
 ```
 
-You can look at the [.env](./.env) file for configuration examples.
+See [docs/deployment/config.md](docs/deployment/config.md) for configuration reference.
 
 ## Documentation
 

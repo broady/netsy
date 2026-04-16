@@ -1,16 +1,16 @@
 #!/usr/bin/env bash
-# Copyright 2025 Nadrama Pty Ltd
+# Copyright 2026 Nadrama Pty Ltd
 # SPDX-License-Identifier: Apache-2.0
 set -eo pipefail
 
 CURRENT=$(dirname "$(readlink -f "$0")")
-CERTS_DIR="${CURRENT}/../certs"
+CERTS_DIR="${CURRENT}/../temp/certs"
 
 # check if kubectl command exists
 command -v kubectl >/dev/null 2>&1 || { echo >&2 "kubectl is required but it's not installed.  Aborting."; exit 1; }
 
 # check that certs exist
-if [ ! -f "${CERTS_DIR}/ca.crt" ] || [ ! -f "${CERTS_DIR}/kubectl.client.crt" ] || [ ! -f "${CERTS_DIR}/kubectl.client.key" ]; then
+if [ ! -f "${CERTS_DIR}/ca.crt" ] || [ ! -f "${CERTS_DIR}/client.crt" ] || [ ! -f "${CERTS_DIR}/client.key" ]; then
     echo >&2 "Required certificates not found. Run './scripts/certs.sh' first. Aborting."
     exit 1
 fi
@@ -24,8 +24,8 @@ kubectl config set-cluster netsy \
 # Configure user with client certificate
 echo "Configuring user 'netsy'..."
 kubectl config set-credentials netsy \
-    --client-certificate="${CERTS_DIR}/kubectl.client.crt" \
-    --client-key="${CERTS_DIR}/kubectl.client.key"
+    --client-certificate="${CERTS_DIR}/client.crt" \
+    --client-key="${CERTS_DIR}/client.key"
 
 # Configure context
 echo "Configuring context 'netsy'..."
