@@ -56,9 +56,10 @@ type Server struct {
 
 	chunkBuffer *chunkBuffer
 
-	heartbeatInterval time.Duration
-	degradationCount  int
-	compactionMetrics *metrics.CompactionMetrics
+	heartbeatInterval    time.Duration
+	degradationCount     int
+	quorumReceiptTimeout time.Duration
+	compactionMetrics    *metrics.CompactionMetrics
 	retryMetrics      *metrics.RetryMetrics
 	storageMetrics    *metrics.ObjectStorageMetrics
 
@@ -113,7 +114,8 @@ func NewServer(
 		followStreams:      make(map[string]*followSession),
 		compactionMetrics: compactionMetrics,
 		retryMetrics:      retryMetrics,
-		storageMetrics:    storageMetrics,
+		storageMetrics:       storageMetrics,
+		quorumReceiptTimeout: defaultQuorumReceiptTimeout,
 		chunkBuffer: newChunkBuffer(
 			logger,
 			state,
@@ -288,6 +290,10 @@ func (s *Server) requireActivePrimary() error {
 
 	return nil
 }
+
+// defaultQuorumReceiptTimeout is the default maximum time the Primary waits
+// for Replica Receipts during a quorum transaction before rolling back.
+const defaultQuorumReceiptTimeout = 1 * time.Second
 
 // degradationCheckInterval is how often the degradation loop checks for
 // Replicas that have missed heartbeats.

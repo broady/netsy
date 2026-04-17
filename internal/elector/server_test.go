@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/nadrama-com/netsy/internal/discovery"
 	"github.com/nadrama-com/netsy/internal/nodestate"
 	"github.com/nadrama-com/netsy/internal/proto"
 	"github.com/nadrama-com/netsy/internal/storage"
@@ -105,5 +106,69 @@ func TestSendHeartbeatRejectsUnknownNode(t *testing.T) {
 	})
 	if err == nil {
 		t.Fatal("expected error for unknown node")
+	}
+}
+
+// TestStaleRegistrationReuseMemberID verifies that re-registering the same
+// node_id after a simulated crash (without deregistration) reuses the
+// previously allocated member_id.
+func TestStaleRegistrationReuseMemberID(t *testing.T) {
+	store := storage.NewMemoryStore()
+	state := nodestate.New(slog.Default())
+	_ = state.SetElector(nodestate.ElectorLeader)
+
+	srv := NewServer(
+		slog.Default(),
+		"test-cluster",
+		store,
+		state,
+		0,
+		time.Second,
+		2,
+		"", 0, nil, 0, 0, nil, nil, nil,
+	)
+	srv.nodeMap.SetReady()
+
+	// Seed an empty members.json so allocateOrReuseMemberID can read it.
+	mf := discovery.MembersFile{
+		ClusterID: "test-cluster",
+		Members:   make(map[string]uint64),
+	}
+	if err := discovery.WriteMembersFile(context.Background(), store, mf); err != nil {
+		t.Fatalf("seed members.json: %v", err)
+	}
+
+	// First registration.
+	resp1, err := srv.RegisterNode(context.Background(), &proto.RegisterNodeRequest{
+		NodeId:                 "node-a",
+		ClientAdvertiseAddress: "https://node-a:2379",
+		PeerAdvertiseAddress:   "https://node-a:2380",
+	})
+	if err != nil {
+		t.Fatalf("first RegisterNode error = %v", err)
+	}
+	firstMemberID := resp1.GetMemberId()
+	if firstMemberID == 0 {
+		t.Fatal("first registration returned member_id 0")
+	}
+
+	// Simulate crash: do NOT call DeregisterNode.
+
+	// Second registration with same node_id.
+	resp2, err := srv.RegisterNode(context.Background(), &proto.RegisterNodeRequest{
+		NodeId:                 "node-a",
+		ClientAdvertiseAddress: "https://node-a:2379",
+		PeerAdvertiseAddress:   "https://node-a:2380",
+	})
+	if err != nil {
+		t.Fatalf("second RegisterNode error = %v", err)
+	}
+
+	if resp2.GetMemberId() != firstMemberID {
+		t.Fatalf("member_id changed: first = %d, second = %d", firstMemberID, resp2.GetMemberId())
+	}
+
+	if srv.nodeMap.Count() != 1 {
+		t.Fatalf("node map count = %d, want 1", srv.nodeMap.Count())
 	}
 }

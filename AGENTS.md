@@ -30,6 +30,16 @@ overmind echo s3
 - `docs/development.md` — local development setup
 - `docs/motivation.md` — project motivation
 
+## Testing
+
+- **Fakes over mocks**: use hand-written fakes composed from existing interfaces (`storage.ObjectStorage`, `localdb.Database`). No mock libraries.
+- **Frameworks**: stdlib `testing` only. Table-driven where multiple sub-cases exist. Direct assertions with `t.Fatal`/`t.Fatalf`.
+- **Test placement**: tests live in the package they exercise (white-box). Name test files after their subject (`quorum_test.go`, `preflight_test.go`), not after a category.
+- **Slow tests**: don't preemptively add skip guards. If a test turns out genuinely slow (and can't be sped up), add `testing.Short()` + `t.Skip("skipping slow test")` to just that test, then `go test -short` will skip it. Don't use build tags for test filtering.
+- **SQLite in tests**: use `localdb.New(filepath.Join(t.TempDir(), "test.sqlite3"))` for real SQLite — don't mock the database.
+- **Object storage in tests**: use `storage.NewMemoryStore()` for in-memory fake object storage.
+- **Test helpers**: use `t.Helper()` on all helper functions. Use `t.Cleanup()` for teardown.
+
 ## Code Style
 
 - **File headers**: Include copyright and SPDX license header on all files

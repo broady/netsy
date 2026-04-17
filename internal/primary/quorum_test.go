@@ -5,10 +5,16 @@
 package primary
 
 import (
+	"context"
+	"log/slog"
+	"strings"
 	"testing"
 	"time"
 
+	"github.com/nadrama-com/netsy/internal/config"
 	"github.com/nadrama-com/netsy/internal/nodestate"
+	"github.com/nadrama-com/netsy/internal/storage"
+	pb "go.etcd.io/etcd/api/v3/etcdserverpb"
 )
 
 func TestRequiredReceipts(t *testing.T) {
@@ -172,4 +178,155 @@ func TestReceiptCollectorIgnoresReceiptAfterDone(t *testing.T) {
 	if !c.isComplete() {
 		t.Fatal("should still be complete")
 	}
+}
+
+// TestQuorumRollbackAndRetryViaPath1 verifies the quorum rollback path:
+// when receipts are not received within the timeout, the transaction is
+// rolled back, timed-out replicas are degraded, and the same revision is
+// reused on retry via Path 1.
+func TestQuorumRollbackAndRetryViaPath1(t *testing.T) {
+	db := openPrimaryTestDB(t)
+	store := storage.NewMemoryStore()
+	state := nodestate.New(slog.Default())
+	cfg := &config.Config{
+		NodeConfig: config.NodeConfig{
+			NodeID:  "node-a",
+			DataDir: t.TempDir(),
+		},
+		ClusterConfig: config.ClusterConfig{
+			Replication: config.ReplicationConfig{
+				Quorum: intPtr(-1),
+				ChunkBuffer: config.ChunkBufferConfig{
+					ThresholdSizeMB:     0,
+					ThresholdAgeMinutes: 0,
+				},
+			},
+		},
+	}
+
+	if err := state.SetPrimary(nodestate.PrimaryStarting); err != nil {
+		t.Fatalf("SetPrimary(Starting) error = %v", err)
+	}
+	if err := state.SetPrimary(nodestate.PrimaryActive); err != nil {
+		t.Fatalf("SetPrimary(Active) error = %v", err)
+	}
+
+	// Set cluster to 3 nodes so majority quorum requires 1 receipt.
+	state.SetClusterState(nodestate.ClusterState{NodeCount: 3})
+
+	srv := &Server{
+		logger:               slog.Default(),
+		config:               cfg,
+		db:                   db,
+		storageClient:        store,
+		state:                state,
+		replicas:             NewReplicas(),
+		followStreams:        make(map[string]*followSession),
+		quorumReceiptTimeout: 10 * time.Millisecond,
+	}
+	srv.chunkBuffer = newChunkBuffer(slog.Default(), state, store, cfg.NodeID, 0, 0, nil)
+	if err := srv.initializeRevisionCounter(); err != nil {
+		t.Fatalf("initializeRevisionCounter() error = %v", err)
+	}
+
+	// Add a healthy replica with prior receipts so quorum path is selected.
+	replica := srv.replicas.Add("replica-b")
+	replica.SetHealth(nodestate.HealthHealthy)
+	replica.ReceiptCount.Store(1)
+
+	// Build a valid create TxnRequest.
+	createReq := &pb.TxnRequest{
+		Compare: []*pb.Compare{{
+			Key:         []byte("test-key"),
+			Target:      pb.Compare_MOD,
+			Result:      pb.Compare_EQUAL,
+			TargetUnion: &pb.Compare_ModRevision{ModRevision: 0},
+		}},
+		Success: []*pb.RequestOp{{
+			Request: &pb.RequestOp_RequestPut{
+				RequestPut: &pb.PutRequest{
+					Key:   []byte("test-key"),
+					Value: []byte("test-value"),
+				},
+			},
+		}},
+	}
+
+	// Quorum write should fail (no receipt within 10ms).
+	_, _, err := srv.LeaderTxn(context.Background(), createReq)
+	if err == nil {
+		t.Fatal("LeaderTxn() expected quorum rollback error")
+	}
+	if !strings.Contains(err.Error(), "quorum not met") {
+		t.Fatalf("LeaderTxn() error = %v, want quorum error", err)
+	}
+
+	// Replica should be marked degraded.
+	entry, ok := srv.replicas.Get("replica-b")
+	if !ok {
+		t.Fatal("expected replica-b in map")
+	}
+	if entry.Health() != nodestate.HealthDegraded {
+		t.Fatalf("replica health = %s, want degraded", entry.Health())
+	}
+
+	// nextRevisionID should NOT have advanced.
+	if got := srv.nextRevisionID.Load(); got != 1 {
+		t.Fatalf("nextRevisionID = %d, want 1 (not incremented)", got)
+	}
+
+	// Give chunk buffer flush goroutine a moment to complete.
+	time.Sleep(50 * time.Millisecond)
+
+	// Retry: quorum path should fall back to Path 1 (replica is degraded).
+	_, resp, err := srv.LeaderTxn(context.Background(), createReq)
+	if err != nil {
+		t.Fatalf("LeaderTxn() retry error = %v", err)
+	}
+	if !resp.Succeeded {
+		t.Fatal("LeaderTxn() retry did not succeed")
+	}
+
+	// The SAME revision (1) should have been used.
+	if resp.Header.Revision != 1 {
+		t.Fatalf("retry revision = %d, want 1 (reused)", resp.Header.Revision)
+	}
+
+	// Now nextRevisionID should be 2.
+	if got := srv.nextRevisionID.Load(); got != 2 {
+		t.Fatalf("nextRevisionID after retry = %d, want 2", got)
+	}
+}
+
+// TestMembershipChangeDropsToPath1 verifies that reducing the number of
+// healthy replicas below the quorum requirement causes selectTxnStrategy
+// to fall back to Path 1 (sync object storage writes).
+func TestMembershipChangeDropsToPath1(t *testing.T) {
+	// 3 nodes, majority quorum → requires 1 receipt.
+	s := selectTxnStrategy(-1, 3, 1)
+	if !s.useQuorum {
+		t.Fatal("expected quorum path with 1 healthy replica in 3-node cluster")
+	}
+
+	// Simulate membership change: healthy replica count drops to 0.
+	s = selectTxnStrategy(-1, 3, 0)
+	if s.useQuorum {
+		t.Fatal("expected sync path with 0 healthy replicas")
+	}
+
+	// Also verify with static quorum.
+	s = selectTxnStrategy(2, 5, 2)
+	if !s.useQuorum {
+		t.Fatal("expected quorum path with 2 healthy replicas and static quorum 2")
+	}
+
+	s = selectTxnStrategy(2, 5, 1)
+	if s.useQuorum {
+		t.Fatal("expected sync path with 1 healthy replica and static quorum 2")
+	}
+}
+
+// intPtr returns a pointer to the given int value.
+func intPtr(v int) *int {
+	return &v
 }

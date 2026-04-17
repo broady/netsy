@@ -11,10 +11,6 @@ import (
 	"github.com/nadrama-com/netsy/internal/nodestate"
 )
 
-// quorumReceiptTimeout is the maximum time the Primary waits for Replica
-// Receipts during a quorum transaction before rolling back.
-const quorumReceiptTimeout = 1 * time.Second
-
 // txnStrategy captures the per-transaction decision of which commit path to
 // use and how many Replica Receipts are needed. When useQuorum is true the
 // Primary follows Path 2 (quorum Receipts); otherwise Path 1 (sync object

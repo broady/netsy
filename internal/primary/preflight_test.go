@@ -127,6 +127,63 @@ func TestRunPreflightPassUploadsUndurableRecords(t *testing.T) {
 	assertFollowCommit(t, <-session.sendCh, 3)
 }
 
+// TestPrimaryCrashRecoveryViaPreflight verifies that a new Primary elected
+// after a crash recovers un-synced records from SQLite and uploads them to
+// object storage during preflight.
+func TestPrimaryCrashRecoveryViaPreflight(t *testing.T) {
+	db := openPrimaryTestDB(t)
+	store := storage.NewMemoryStore()
+	state := nodestate.New(slog.Default())
+	cfg := &config.Config{
+		NodeConfig: config.NodeConfig{
+			NodeID:  "node-b",
+			DataDir: t.TempDir(),
+		},
+	}
+
+	// Simulate previous Primary: records 1-3 in SQLite, only record 1 in S3.
+	insertPrimaryReplicatedRecord(t, db, testReplicatedRecord(1, nil))
+	insertPrimaryReplicatedRecord(t, db, testReplicatedRecord(2, nil))
+	insertPrimaryReplicatedRecord(t, db, testReplicatedRecord(3, nil))
+
+	key1, data1 := encodePrimaryTestChunk(t, "node-a", testReplicatedRecord(1, nil))
+	if err := store.Put(context.Background(), key1, data1); err != nil {
+		t.Fatalf("store.Put(%s) error = %v", key1, err)
+	}
+
+	// New Primary picks up after crash.
+	srv := newPrimaryPreflightTestServer(t, cfg, db, store, state)
+	if err := state.SetPrimary(nodestate.PrimaryStarting); err != nil {
+		t.Fatalf("SetPrimary(Starting) error = %v", err)
+	}
+
+	session := srv.addFollowStream("replica-a")
+
+	if err := srv.runPreflightPass(context.Background()); err != nil {
+		t.Fatalf("runPreflightPass() error = %v", err)
+	}
+
+	// All 3 records should now be in object storage.
+	for revision := int64(1); revision <= 3; revision++ {
+		if _, _, err := store.Get(context.Background(), datastore.ChunkKey(revision)); err != nil {
+			t.Fatalf("store.Get(chunk %d) error = %v", revision, err)
+		}
+	}
+
+	if state.Committed() != 3 {
+		t.Fatalf("Committed() = %d, want 3", state.Committed())
+	}
+	if got := srv.nextRevisionID.Load(); got != 4 {
+		t.Fatalf("nextRevisionID = %d, want 4", got)
+	}
+
+	// Replica should have received records 2 and 3 (record 1 was already durable)
+	// and a commit message.
+	assertFollowRecord(t, <-session.sendCh, 2)
+	assertFollowRecord(t, <-session.sendCh, 3)
+	assertFollowCommit(t, <-session.sendCh, 3)
+}
+
 // openPrimaryTestDB creates and opens a SQLite database for Primary tests.
 func openPrimaryTestDB(t *testing.T) localdb.Database {
 	t.Helper()

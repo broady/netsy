@@ -51,6 +51,7 @@ func TestDownloadAndImportFile(t *testing.T) {
 		ChunkKey(record.GetRevision()),
 		int64(len(payload)),
 		pb.FileKind_KIND_CHUNK,
+		nil,
 	); err != nil {
 		t.Fatalf("DownloadAndImportFile() error = %v", err)
 	}

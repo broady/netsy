@@ -9,9 +9,13 @@ import (
 	"log/slog"
 	"strings"
 	"testing"
+	"time"
 
+	"github.com/nadrama-com/netsy/internal/config"
+	"github.com/nadrama-com/netsy/internal/localdb"
 	"github.com/nadrama-com/netsy/internal/nodestate"
 	"github.com/nadrama-com/netsy/internal/proto"
+	"github.com/nadrama-com/netsy/internal/storage"
 	pb "go.etcd.io/etcd/api/v3/etcdserverpb"
 	"go.etcd.io/etcd/api/v3/mvccpb"
 )
@@ -1301,4 +1305,108 @@ func TestBuildTxnResponse(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TestAmbiguousCommitTransitionsToDraining verifies that when a synchronous
+// object storage write succeeds but the SQLite commit fails, the Primary
+// transitions to Draining to prevent further writes.
+func TestAmbiguousCommitTransitionsToDraining(t *testing.T) {
+	rawDB := openPrimaryTestDB(t)
+	failingDB := localdb.NewFailingDB(rawDB)
+	store := storage.NewMemoryStore()
+	state := nodestate.New(slog.Default())
+	cfg := &config.Config{
+		NodeConfig: config.NodeConfig{
+			NodeID:  "node-a",
+			DataDir: t.TempDir(),
+		},
+		ClusterConfig: config.ClusterConfig{
+			Replication: config.ReplicationConfig{
+				Quorum:      intPtr(0),
+				ChunkBuffer: config.ChunkBufferConfig{},
+			},
+		},
+	}
+
+	if err := state.SetPrimary(nodestate.PrimaryStarting); err != nil {
+		t.Fatalf("SetPrimary(Starting) error = %v", err)
+	}
+	if err := state.SetPrimary(nodestate.PrimaryActive); err != nil {
+		t.Fatalf("SetPrimary(Active) error = %v", err)
+	}
+
+	srv := &Server{
+		logger:               slog.Default(),
+		config:               cfg,
+		db:                   failingDB,
+		storageClient:        store,
+		state:                state,
+		replicas:             NewReplicas(),
+		followStreams:         make(map[string]*followSession),
+		quorumReceiptTimeout: time.Second,
+	}
+	srv.chunkBuffer = newChunkBuffer(slog.Default(), state, store, cfg.NodeID, 0, 0, nil)
+	if err := srv.initializeRevisionCounter(); err != nil {
+		t.Fatalf("initializeRevisionCounter() error = %v", err)
+	}
+
+	// First write succeeds normally.
+	req1 := createTxnRequest("key-1", "value-1", 0)
+	_, _, err := srv.LeaderTxn(context.Background(), req1)
+	if err != nil {
+		t.Fatalf("first LeaderTxn error = %v", err)
+	}
+
+	// Enable commit failure — S3 write will succeed, SQLite commit will fail.
+	failingDB.SetFailCommit(true)
+
+	req2 := createTxnRequest("key-2", "value-2", 0)
+	_, _, err = srv.LeaderTxn(context.Background(), req2)
+	if err == nil {
+		t.Fatal("second LeaderTxn should fail with ambiguous commit")
+	}
+
+	// Primary should have transitioned to Draining.
+	if state.Primary() != nodestate.PrimaryDraining {
+		t.Fatalf("Primary state = %s, want Draining", state.Primary())
+	}
+
+	// Further writes should be rejected.
+	failingDB.SetFailCommit(false)
+	req3 := createTxnRequest("key-3", "value-3", 0)
+	_, _, err = srv.LeaderTxn(context.Background(), req3)
+	if err == nil {
+		t.Fatal("LeaderTxn should reject writes in Draining state")
+	}
+	if !strings.Contains(err.Error(), "not accepting writes") {
+		t.Fatalf("expected write rejection error, got: %v", err)
+	}
+}
+
+// createTxnRequest builds a valid etcd-compatible create TxnRequest.
+func createTxnRequest(key, value string, modRevision int64) *pb.TxnRequest {
+	req := &pb.TxnRequest{
+		Compare: []*pb.Compare{{
+			Key:         []byte(key),
+			Target:      pb.Compare_MOD,
+			Result:      pb.Compare_EQUAL,
+			TargetUnion: &pb.Compare_ModRevision{ModRevision: modRevision},
+		}},
+		Success: []*pb.RequestOp{{
+			Request: &pb.RequestOp_RequestPut{
+				RequestPut: &pb.PutRequest{
+					Key:   []byte(key),
+					Value: []byte(value),
+				},
+			},
+		}},
+	}
+	if modRevision > 0 {
+		req.Failure = []*pb.RequestOp{{
+			Request: &pb.RequestOp_RequestRange{
+				RequestRange: &pb.RangeRequest{Key: []byte(key)},
+			},
+		}}
+	}
+	return req
 }

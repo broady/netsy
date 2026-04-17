@@ -186,8 +186,16 @@ func (ps *Server) executeObjectStorageTxn(ctx context.Context, tx *localdb.Tx, r
 		ps.startObjectStorageRecovery(record, err)
 		return fmt.Errorf("object storage upload failed: %w", err)
 	}
-	// Commit SQLite transaction
+	// Commit SQLite transaction. If the commit fails after the record is
+	// already durable in object storage, the state is ambiguous — transition
+	// to Draining to prevent further writes.
 	if err := tx.Commit(); err != nil {
+		if setErr := ps.state.SetPrimary(nodestate.PrimaryDraining); setErr != nil {
+			ps.logger.Error("failed to transition to draining after ambiguous commit",
+				"commit_error", err,
+				"transition_error", setErr,
+			)
+		}
 		return fmt.Errorf("failed to commit transaction: %w", err)
 	}
 	if ps.metrics != nil {
@@ -222,7 +230,7 @@ func (ps *Server) executeQuorumTxn(ctx context.Context, tx *localdb.Tx, record *
 	ps.BroadcastRecord(record)
 
 	// Wait for quorum receipts.
-	if !collector.wait(quorumReceiptTimeout) {
+	if !collector.wait(ps.quorumReceiptTimeout) {
 		// Quorum not met — rollback.
 		tx.Rollback()
 		if ps.metrics != nil {
