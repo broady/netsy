@@ -112,4 +112,4 @@ clean-dev: ## Stop development environment and remove temp files
 	@echo "Development environment cleaned."
 
 image: ## Build container image
-	@echo "TODO: docker build"
+	docker build -f images/netsy/Containerfile -t ghcr.io/netsy-dev/netsy:latest .

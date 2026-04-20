@@ -1,0 +1,94 @@
+# Netsy <https://netsy.dev>
+# Copyright 2026 Nadrama Pty Ltd
+# SPDX-License-Identifier: Apache-2.0
+
+version: 2
+
+project_name: netsy
+
+before:
+  hooks:
+    - go mod tidy
+
+builds:
+  - id: netsy
+    main: ./cmd/netsy
+    binary: netsy
+
+    # CGO is required for sqlite3
+    env:
+      - CGO_ENABLED=1
+
+    ldflags:
+      - -s -w
+      - -extldflags -static
+      - -X github.com/netsy-dev/netsy/internal/buildvars.buildVersion={{ .Version }}
+      - -X github.com/netsy-dev/netsy/internal/buildvars.buildDate={{ .Date }}
+      - -X github.com/netsy-dev/netsy/internal/buildvars.commitHash={{ .ShortCommit }}
+      - -X github.com/netsy-dev/netsy/internal/buildvars.commitDate={{ .CommitDate }}
+      - -X github.com/netsy-dev/netsy/internal/buildvars.commitBranch={{ .Branch }}
+
+    # Linux-only targets — Netsy is a server binary.
+    targets:
+      - linux_amd64
+      - linux_arm64
+
+    overrides:
+      # Musl cross-compilers for static linking.
+      - goos: linux
+        goarch: amd64
+        env:
+          - CGO_ENABLED=1
+          - CC=x86_64-linux-musl-gcc
+          - CXX=x86_64-linux-musl-g++
+
+      - goos: linux
+        goarch: arm64
+        env:
+          - CGO_ENABLED=1
+          - CC=aarch64-linux-musl-gcc
+          - CXX=aarch64-linux-musl-g++
+
+archives:
+  - id: default
+    format: tar.gz
+    name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+    files:
+      - LICENSE
+
+signs:
+  - artifacts: checksum
+    cmd: cosign
+    signature: "${artifact}.bundle"
+    args: ["sign-blob", "--yes", "--bundle=${signature}", "${artifact}"]
+    output: true
+
+checksum:
+  name_template: '{{ .ProjectName }}_{{ .Version }}_checksums.txt'
+  algorithm: sha512
+
+sboms:
+  - id: archive
+    artifacts: archive
+    documents:
+      - "{{ .ArtifactName }}.spdx.json"
+  - id: binary
+    artifacts: binary
+    documents:
+      - "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}_{{ .Binary }}.spdx.json"
+
+changelog:
+  sort: asc
+  use: github
+  filters:
+    exclude:
+      - "^test:"
+      - "^chore:"
+      - "^ci:"
+
+release:
+  github:
+    owner: netsy-dev
+    name: netsy
+  draft: false
+  prerelease: auto

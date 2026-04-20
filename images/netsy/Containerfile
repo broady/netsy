@@ -1,0 +1,33 @@
+# Netsy <https://netsy.dev>
+# Copyright 2026 Nadrama Pty Ltd
+# SPDX-License-Identifier: Apache-2.0
+
+# Build stage - using alpine with musl for static CGO build
+FROM golang:1.25-alpine AS builder
+WORKDIR /workspace
+
+# Install build dependencies for CGO/SQLite
+RUN apk add --no-cache musl-dev gcc make git
+
+# Copy go mod files
+COPY go.mod go.sum ./
+RUN go mod download
+
+# Copy source code
+COPY . .
+
+# Build the server (requires CGO for SQLite)
+RUN GOOS=linux CC=gcc CXX=g++ make build
+
+# Runtime stage
+FROM gcr.io/distroless/static:nonroot
+WORKDIR /
+
+# Copy the builder artefacts
+COPY --from=builder /workspace/bin/netsy /usr/bin/netsy
+COPY --from=builder /workspace/bin/version.txt /usr/share/netsy/version.txt
+
+# Use distroless nonroot user
+USER nonroot:nonroot
+
+ENTRYPOINT ["/usr/bin/netsy"]

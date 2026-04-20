@@ -1,0 +1,14 @@
+Netsy <https://netsy.dev>
+SPDX-License-Identifier: Apache-2.0
+
+Netsy has been deployed with {{ .Values.replicas }} replicas.
+
+Client endpoints (pass all to --etcd-servers):
+{{- $fullname := include "netsy.fullname" . }}
+{{- $ns := .Release.Namespace }}
+{{- range $i := until (int .Values.replicas) }}
+  https://{{ $fullname }}-{{ $i }}.{{ $fullname }}.{{ $ns }}.svc.cluster.local:2378
+{{- end }}
+
+To verify the cluster is healthy:
+  kubectl get pods -l "{{ include "netsy.selectorLabels" . | replace ": " "=" | replace "\n" "," }}" -n {{ .Release.Namespace }}

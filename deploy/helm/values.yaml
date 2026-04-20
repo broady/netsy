@@ -1,0 +1,98 @@
+# Netsy <https://netsy.dev>
+# Copyright 2026 Nadrama Pty Ltd
+# SPDX-License-Identifier: Apache-2.0
+# yaml-language-server: $schema=values.schema.json
+
+replicas: 3
+
+# Must match the cluster_id in the config below.
+clusterID: netsy
+
+image:
+  repository: ghcr.io/netsy-dev/netsy
+  # Defaults to the chart appVersion.
+  tag: ""
+  pullPolicy: IfNotPresent
+
+# TLS certificate lifetimes (managed by cert-manager CSI driver).
+tls:
+  # CA certificate duration (default: 10 years).
+  caDuration: "87600h"
+  # Pod certificate duration (default: 90 days).
+  duration: "2160h"
+  # Renew certificates before expiry (default: 30 days).
+  renewBefore: "720h"
+
+# Cluster config file (JSONC) mounted at /etc/netsy/config.jsonc.
+# See docs/deployment/config.md for the full configuration reference.
+config: |
+  {
+    "cluster_id": "netsy",
+
+    "storage": {
+      "provider": "s3",
+      "bucket_name": "netsy",
+      "key_prefix": "",
+      "class": "STANDARD",
+      "encryption": "provider-managed"
+    },
+
+    "elector": {
+      "heartbeat_interval": "1s",
+      "degradation_count": 2,
+      "deregistration_timeout": "3m",
+      "primary_prior_timeout": "5s"
+    },
+
+    "replication": {
+      "quorum": -1,
+      "heartbeat_interval": "500ms",
+      "degradation_count": 2,
+      "chunk_buffer": {
+        "threshold_size_mb": 4,
+        "threshold_age_minutes": 1
+      }
+    },
+
+    "snapshot": {
+      "threshold_records": 10000,
+      "threshold_size_mb": 10000,
+      "threshold_age_minutes": 0
+    },
+
+    "compaction_interval": "5m"
+  }
+
+# Persistent storage for the local SQLite database. Disabled by default —
+# Netsy rebuilds from object storage on startup. Enable for faster restarts.
+persistence:
+  enabled: false
+  size: "1Gi"
+  # storageClass: ""
+
+resources: {}
+  # requests:
+  #   cpu: 100m
+  #   memory: 128Mi
+  # limits:
+  #   cpu: 500m
+  #   memory: 512Mi
+
+serviceAccount:
+  create: true
+  name: ""
+  annotations: {}
+
+# Additional environment variables (e.g. AWS credentials, NETSY_DEBUG).
+extraEnv: []
+  # - name: AWS_ACCESS_KEY_ID
+  #   valueFrom:
+  #     secretKeyRef:
+  #       name: aws-credentials
+  #       key: access-key-id
+
+podAnnotations: {}
+podLabels: {}
+nodeSelector: {}
+tolerations: []
+affinity: {}

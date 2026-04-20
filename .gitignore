@@ -13,6 +13,7 @@ default.etcd/
 
 # Build directories
 bin/
+dist/
 
 # Temp directories
 temp

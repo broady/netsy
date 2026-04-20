@@ -1,0 +1,23 @@
+# Netsy <https://netsy.dev>
+# Copyright 2026 Nadrama Pty Ltd
+# SPDX-License-Identifier: Apache-2.0
+
+apiVersion: v2
+name: netsy
+description: An etcd-compatible key-value store backed by object storage
+type: application
+version: 0.1.0
+appVersion: "0.0.0"
+home: https://netsy.dev
+sources:
+  - https://github.com/netsy-dev/netsy
+maintainers:
+  - name: Nadrama
+    url: https://nadrama.com
+keywords:
+  - etcd
+  - key-value
+  - kubernetes
+  - object-storage
+  - s3
+  - gcs

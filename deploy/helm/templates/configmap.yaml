@@ -1,0 +1,13 @@
+# Netsy <https://netsy.dev>
+# Copyright 2026 Nadrama Pty Ltd
+# SPDX-License-Identifier: Apache-2.0
+
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "netsy.fullname" . }}
+  labels:
+    {{- include "netsy.labels" . | nindent 4 }}
+data:
+  config.jsonc: |
+    {{- .Values.config | nindent 4 }}

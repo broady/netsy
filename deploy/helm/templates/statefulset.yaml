@@ -1,0 +1,181 @@
+# Netsy <https://netsy.dev>
+# Copyright 2026 Nadrama Pty Ltd
+# SPDX-License-Identifier: Apache-2.0
+
+{{- $fullname := include "netsy.fullname" . }}
+{{- $clusterID := required "clusterID is required" .Values.clusterID }}
+
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: {{ $fullname }}
+  labels:
+    {{- include "netsy.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.replicas }}
+  serviceName: {{ $fullname }}
+  selector:
+    matchLabels:
+      {{- include "netsy.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      annotations:
+        checksum/config: {{ include (print $.Template.BasePath "/configmap.yaml") . | sha256sum }}
+        {{- with .Values.podAnnotations }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+      labels:
+        {{- include "netsy.selectorLabels" . | nindent 8 }}
+        {{- with .Values.podLabels }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+    spec:
+      serviceAccountName: {{ include "netsy.serviceAccountName" . }}
+      containers:
+        - name: netsy
+          image: {{ include "netsy.image" . }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          env:
+            - name: POD_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+            - name: NETSY_CONFIG
+              value: /etc/netsy/config.jsonc
+            - name: NETSY_NODE_ID
+              value: "$(POD_NAME)"
+            - name: NETSY_BIND_CLIENT
+              value: ":2378"
+            - name: NETSY_BIND_PEER
+              value: ":2381"
+            - name: NETSY_BIND_ELECTION
+              value: ":8443"
+            - name: NETSY_BIND_HEALTH
+              value: ":8080"
+            - name: NETSY_ADVERTISE_CLIENT
+              value: "$(POD_NAME).{{ $fullname }}.{{ .Release.Namespace }}.svc.cluster.local:2378"
+            - name: NETSY_ADVERTISE_PEER
+              value: "$(POD_NAME).{{ $fullname }}.{{ .Release.Namespace }}.svc.cluster.local:2381"
+            - name: NETSY_ADVERTISE_ELECTION
+              value: "$(POD_NAME).{{ $fullname }}.{{ .Release.Namespace }}.svc.cluster.local:8443"
+            - name: NETSY_DATA_DIR
+              value: /var/lib/netsy
+            - name: NETSY_TLS_CA_CERT
+              value: /etc/netsy/certs/ca.crt
+            - name: NETSY_TLS_SERVER_CERT
+              value: /etc/netsy/certs/server.crt
+            - name: NETSY_TLS_SERVER_KEY
+              value: /etc/netsy/certs/server.key
+            - name: NETSY_TLS_CLIENT_CERT
+              value: /etc/netsy/certs/client/peer.crt
+            - name: NETSY_TLS_CLIENT_KEY
+              value: /etc/netsy/certs/client/peer.key
+            {{- with .Values.extraEnv }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
+          ports:
+            - name: client
+              containerPort: 2378
+              protocol: TCP
+            - name: peer
+              containerPort: 2381
+              protocol: TCP
+            - name: election
+              containerPort: 8443
+              protocol: TCP
+            - name: health
+              containerPort: 8080
+              protocol: TCP
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: health
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: health
+            initialDelaySeconds: 5
+            periodSeconds: 5
+          volumeMounts:
+            - name: config
+              mountPath: /etc/netsy/config.jsonc
+              subPath: config.jsonc
+              readOnly: true
+            - name: server-tls
+              mountPath: /etc/netsy/certs
+              readOnly: true
+            - name: client-tls
+              mountPath: /etc/netsy/certs/client
+              readOnly: true
+            - name: data
+              mountPath: /var/lib/netsy
+          {{- with .Values.resources }}
+          resources:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+      volumes:
+        - name: config
+          configMap:
+            name: {{ $fullname }}
+        - name: server-tls
+          csi:
+            driver: csi.cert-manager.io
+            readOnly: true
+            volumeAttributes:
+              csi.cert-manager.io/issuer-name: {{ $fullname }}-ca
+              csi.cert-manager.io/issuer-kind: Issuer
+              csi.cert-manager.io/common-name: ${POD_NAME}
+              csi.cert-manager.io/dns-names: ${POD_NAME}.{{ $fullname }}.${POD_NAMESPACE}.svc.cluster.local,localhost
+              csi.cert-manager.io/ip-sans: "127.0.0.1,::1"
+              csi.cert-manager.io/uri-sans: netsy://{{ $clusterID }}/peer/${POD_NAME}
+              csi.cert-manager.io/key-usages: digital signature,key encipherment,server auth
+              csi.cert-manager.io/duration: {{ .Values.tls.duration | quote }}
+              csi.cert-manager.io/renew-before: {{ .Values.tls.renewBefore | quote }}
+              csi.cert-manager.io/certificate-file: server.crt
+              csi.cert-manager.io/privatekey-file: server.key
+              csi.cert-manager.io/ca-file: ca.crt
+        - name: client-tls
+          csi:
+            driver: csi.cert-manager.io
+            readOnly: true
+            volumeAttributes:
+              csi.cert-manager.io/issuer-name: {{ $fullname }}-ca
+              csi.cert-manager.io/issuer-kind: Issuer
+              csi.cert-manager.io/common-name: ${POD_NAME}
+              csi.cert-manager.io/uri-sans: netsy://{{ $clusterID }}/peer/${POD_NAME}
+              csi.cert-manager.io/key-usages: digital signature,client auth
+              csi.cert-manager.io/duration: {{ .Values.tls.duration | quote }}
+              csi.cert-manager.io/renew-before: {{ .Values.tls.renewBefore | quote }}
+              csi.cert-manager.io/certificate-file: peer.crt
+              csi.cert-manager.io/privatekey-file: peer.key
+        {{- if not .Values.persistence.enabled }}
+        - name: data
+          emptyDir: {}
+        {{- end }}
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+  {{- if .Values.persistence.enabled }}
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        {{- if .Values.persistence.storageClass }}
+        storageClassName: {{ .Values.persistence.storageClass | quote }}
+        {{- end }}
+        resources:
+          requests:
+            storage: {{ .Values.persistence.size }}
+  {{- end }}
