@@ -17,6 +17,7 @@ import (
 	"github.com/netsy-dev/netsy/internal/config"
 )
 
+// Role represents the mTLS certificate role embedded in URI SANs.
 type Role string
 
 const (
@@ -29,11 +30,11 @@ func ValidateLocalNodeCertificates(c *config.Config, tlsFiles *config.TLSFiles) 
 	if tlsFiles == nil {
 		return fmt.Errorf("tls files missing")
 	}
-	if err := validatePeerSubject(tlsFiles.ServerCert.Leaf, c.NodeID, c.ClusterID); err != nil {
-		return fmt.Errorf("invalid server certificate subject: %w", err)
+	if err := validatePeerIdentity(tlsFiles.ServerCert.Leaf, c.NodeID, c.ClusterID); err != nil {
+		return fmt.Errorf("invalid server certificate identity: %w", err)
 	}
-	if err := validatePeerSubject(tlsFiles.ClientCert.Leaf, c.NodeID, c.ClusterID); err != nil {
-		return fmt.Errorf("invalid client certificate subject: %w", err)
+	if err := validatePeerIdentity(tlsFiles.ClientCert.Leaf, c.NodeID, c.ClusterID); err != nil {
+		return fmt.Errorf("invalid client certificate identity: %w", err)
 	}
 	if err := validateSANs(tlsFiles.ServerCert.Leaf, c.AdvertiseClient, c.AdvertisePeer, c.AdvertiseElection); err != nil {
 		return fmt.Errorf("invalid server certificate SANs: %w", err)
@@ -72,25 +73,25 @@ func verifyConnection(state tls.ConnectionState, clusterID string, allowedRole R
 	}
 
 	cert := state.PeerCertificates[0]
-	role, err := certRole(cert)
+	id, err := ParseURISAN(cert)
 	if err != nil {
 		return err
 	}
-	if role != allowedRole {
-		return fmt.Errorf("certificate role %q is not allowed", role)
+	if id.Role != allowedRole {
+		return fmt.Errorf("certificate role %q is not allowed", id.Role)
 	}
-	if err := checkOrganization(cert, clusterID); err != nil {
-		return err
+	if id.ClusterID != clusterID {
+		return fmt.Errorf("certificate cluster_id must match %q, got %q", clusterID, id.ClusterID)
 	}
 
-	switch role {
+	switch id.Role {
 	case RolePeer:
-		if err := config.ValidateIdentifier(cert.Subject.CommonName, "peer certificate common name"); err != nil {
+		if err := config.ValidateIdentifier(id.Name, "peer certificate identity"); err != nil {
 			return err
 		}
 	case RoleClient:
-		if cert.Subject.CommonName == "" {
-			return fmt.Errorf("client certificate common name is required")
+		if id.Name == "" {
+			return fmt.Errorf("client certificate identity is required")
 		}
 	}
 
@@ -116,23 +117,23 @@ func NewClientTLSConfig(tlsFiles *config.TLSFiles) (*tls.Config, error) {
 	}, nil
 }
 
-// validatePeerSubject checks that a local node certificate has the peer role and matches the expected node and cluster identity.
-func validatePeerSubject(cert *x509.Certificate, nodeID, clusterID string) error {
+// validatePeerIdentity checks that a local node certificate has the peer role and matches the expected node and cluster identity.
+func validatePeerIdentity(cert *x509.Certificate, nodeID, clusterID string) error {
 	if cert == nil {
 		return fmt.Errorf("certificate missing")
 	}
-	if err := checkOrganization(cert, clusterID); err != nil {
-		return err
-	}
-	role, err := certRole(cert)
+	id, err := ParseURISAN(cert)
 	if err != nil {
 		return err
 	}
-	if role != RolePeer {
-		return fmt.Errorf("certificate role must be %q, got %q", RolePeer, role)
+	if id.ClusterID != clusterID {
+		return fmt.Errorf("certificate cluster_id must match %q, got %q", clusterID, id.ClusterID)
 	}
-	if cert.Subject.CommonName != nodeID {
-		return fmt.Errorf("certificate common name must match node_id %q, got %q", nodeID, cert.Subject.CommonName)
+	if id.Role != RolePeer {
+		return fmt.Errorf("certificate role must be %q, got %q", RolePeer, id.Role)
+	}
+	if id.Name != nodeID {
+		return fmt.Errorf("certificate identity must match node_id %q, got %q", nodeID, id.Name)
 	}
 	return nil
 }
@@ -167,32 +168,7 @@ func validateSANs(cert *x509.Certificate, advertiseAddrs ...string) error {
 	return nil
 }
 
-// checkOrganization requires the certificate's Organization field to match the cluster ID.
-func checkOrganization(cert *x509.Certificate, clusterID string) error {
-	if len(cert.Subject.Organization) != 1 {
-		return fmt.Errorf("certificate must contain exactly one organization")
-	}
-	if cert.Subject.Organization[0] != clusterID {
-		return fmt.Errorf("certificate organization must match cluster_id %q, got %q", clusterID, cert.Subject.Organization[0])
-	}
-	return nil
-}
-
-// certRole extracts and validates the role from the certificate's OrganizationalUnit field.
-func certRole(cert *x509.Certificate) (Role, error) {
-	if len(cert.Subject.OrganizationalUnit) != 1 {
-		return "", fmt.Errorf("certificate must contain exactly one organizational unit")
-	}
-	role := Role(cert.Subject.OrganizationalUnit[0])
-	switch role {
-	case RolePeer, RoleClient:
-		return role, nil
-	default:
-		return "", fmt.Errorf("certificate organizational unit must be %q or %q, got %q", RolePeer, RoleClient, cert.Subject.OrganizationalUnit[0])
-	}
-}
-
-// PeerNodeID extracts the peer's node ID (CN field) from the gRPC context's TLS peer certificates.
+// PeerNodeID extracts the peer's node ID from the gRPC context's TLS peer certificate URI SAN.
 func PeerNodeID(ctx context.Context) (string, error) {
 	p, ok := peer.FromContext(ctx)
 	if !ok {
@@ -208,9 +184,9 @@ func PeerNodeID(ctx context.Context) (string, error) {
 	if len(tlsInfo.State.PeerCertificates) == 0 {
 		return "", fmt.Errorf("no peer certificates")
 	}
-	cn := tlsInfo.State.PeerCertificates[0].Subject.CommonName
-	if cn == "" {
-		return "", fmt.Errorf("peer certificate common name is empty")
+	id, err := ParseURISAN(tlsInfo.State.PeerCertificates[0])
+	if err != nil {
+		return "", err
 	}
-	return cn, nil
+	return id.Name, nil
 }

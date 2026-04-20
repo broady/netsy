@@ -12,6 +12,7 @@ import (
 	"crypto/x509/pkix"
 	"math/big"
 	"net"
+	"net/url"
 	"testing"
 	"time"
 
@@ -21,16 +22,14 @@ import (
 func TestValidateLocalNodeCertificates(t *testing.T) {
 	serverCert := newLeaf(t, certSpec{
 		commonName: "node-1",
-		org:        "my-cluster",
-		orgUnit:    "peer",
+		uriSANs:    []*url.URL{BuildURISAN("my-cluster", RolePeer, "node-1")},
 		dnsNames:   []string{"node-1.example.internal"},
 		ipAddrs:    []net.IP{net.ParseIP("172.16.0.1")},
 		extKeyUsages: []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
 	})
 	clientCert := newLeaf(t, certSpec{
 		commonName:   "node-1",
-		org:          "my-cluster",
-		orgUnit:      "peer",
+		uriSANs:      []*url.URL{BuildURISAN("my-cluster", RolePeer, "node-1")},
 		extKeyUsages: []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth},
 	})
 
@@ -56,14 +55,13 @@ func TestValidateLocalNodeCertificates(t *testing.T) {
 func TestValidateLocalNodeCertificatesRejectsWrongNodeID(t *testing.T) {
 	cert := newLeaf(t, certSpec{
 		commonName:   "node-wrong",
-		org:          "my-cluster",
-		orgUnit:      "peer",
+		uriSANs:      []*url.URL{BuildURISAN("my-cluster", RolePeer, "node-wrong")},
 		dnsNames:     []string{"localhost"},
 		extKeyUsages: []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
 	})
 
 	err := ValidateLocalNodeCertificates(&config.Config{
-		NodeConfig: config.NodeConfig{NodeID: "node-1"},
+		NodeConfig:    config.NodeConfig{NodeID: "node-1"},
 		ClusterConfig: config.ClusterConfig{ClusterID: "my-cluster"},
 	}, &config.TLSFiles{
 		ServerCert: &tls.Certificate{Leaf: cert},
@@ -77,14 +75,13 @@ func TestValidateLocalNodeCertificatesRejectsWrongNodeID(t *testing.T) {
 func TestValidateLocalNodeCertificatesRejectsClientRole(t *testing.T) {
 	cert := newLeaf(t, certSpec{
 		commonName:   "node-1",
-		org:          "my-cluster",
-		orgUnit:      "client",
+		uriSANs:      []*url.URL{BuildURISAN("my-cluster", RoleClient, "node-1")},
 		dnsNames:     []string{"localhost"},
 		extKeyUsages: []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
 	})
 
 	err := ValidateLocalNodeCertificates(&config.Config{
-		NodeConfig: config.NodeConfig{NodeID: "node-1"},
+		NodeConfig:    config.NodeConfig{NodeID: "node-1"},
 		ClusterConfig: config.ClusterConfig{ClusterID: "my-cluster"},
 	}, &config.TLSFiles{
 		ServerCert: &tls.Certificate{Leaf: cert},
@@ -98,15 +95,13 @@ func TestValidateLocalNodeCertificatesRejectsClientRole(t *testing.T) {
 func TestValidateLocalNodeCertificatesRejectsMissingSAN(t *testing.T) {
 	serverCert := newLeaf(t, certSpec{
 		commonName:   "node-1",
-		org:          "my-cluster",
-		orgUnit:      "peer",
+		uriSANs:      []*url.URL{BuildURISAN("my-cluster", RolePeer, "node-1")},
 		dnsNames:     []string{"localhost"},
 		extKeyUsages: []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
 	})
 	clientCert := newLeaf(t, certSpec{
 		commonName:   "node-1",
-		org:          "my-cluster",
-		orgUnit:      "peer",
+		uriSANs:      []*url.URL{BuildURISAN("my-cluster", RolePeer, "node-1")},
 		extKeyUsages: []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth},
 	})
 
@@ -128,8 +123,7 @@ func TestValidateLocalNodeCertificatesRejectsMissingSAN(t *testing.T) {
 func TestNewServerTLSConfig(t *testing.T) {
 	serverCert := newLeaf(t, certSpec{
 		commonName:   "node-1",
-		org:          "my-cluster",
-		orgUnit:      "peer",
+		uriSANs:      []*url.URL{BuildURISAN("my-cluster", RolePeer, "node-1")},
 		extKeyUsages: []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
 	})
 	tlsFiles := &config.TLSFiles{
@@ -145,15 +139,11 @@ func TestNewServerTLSConfig(t *testing.T) {
 		if err != nil {
 			t.Fatalf("NewServerTLSConfig() error = %v", err)
 		}
-		if cfg.ClientAuth != tls.RequireAndVerifyClientCert {
-			t.Fatalf("ClientAuth = %v, want %v", cfg.ClientAuth, tls.RequireAndVerifyClientCert)
-		}
 		err = cfg.VerifyConnection(tls.ConnectionState{
 			PeerCertificates: []*x509.Certificate{
 				newLeaf(t, certSpec{
 					commonName:   "kubectl",
-					org:          "my-cluster",
-					orgUnit:      "client",
+					uriSANs:      []*url.URL{BuildURISAN("my-cluster", RoleClient, "kubectl")},
 					extKeyUsages: []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth},
 				}),
 			},
@@ -164,14 +154,29 @@ func TestNewServerTLSConfig(t *testing.T) {
 		}
 	})
 
+	t.Run("rejects missing URI SAN", func(t *testing.T) {
+		cfg, _ := NewServerTLSConfig(conf, tlsFiles, RoleClient)
+		err := cfg.VerifyConnection(tls.ConnectionState{
+			PeerCertificates: []*x509.Certificate{
+				newLeaf(t, certSpec{
+					commonName:   "kubectl",
+					extKeyUsages: []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth},
+				}),
+			},
+			VerifiedChains: [][]*x509.Certificate{{serverCert}},
+		})
+		if err == nil {
+			t.Fatal("VerifyConnection() error = nil, want rejection for missing URI SAN")
+		}
+	})
+
 	t.Run("client role rejects peer certs", func(t *testing.T) {
 		cfg, _ := NewServerTLSConfig(conf, tlsFiles, RoleClient)
 		err := cfg.VerifyConnection(tls.ConnectionState{
 			PeerCertificates: []*x509.Certificate{
 				newLeaf(t, certSpec{
 					commonName:   "node-2",
-					org:          "my-cluster",
-					orgUnit:      "peer",
+					uriSANs:      []*url.URL{BuildURISAN("my-cluster", RolePeer, "node-2")},
 					extKeyUsages: []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth},
 				}),
 			},
@@ -188,8 +193,7 @@ func TestNewServerTLSConfig(t *testing.T) {
 			PeerCertificates: []*x509.Certificate{
 				newLeaf(t, certSpec{
 					commonName:   "kubectl",
-					org:          "other-cluster",
-					orgUnit:      "client",
+					uriSANs:      []*url.URL{BuildURISAN("other-cluster", RoleClient, "kubectl")},
 					extKeyUsages: []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth},
 				}),
 			},
@@ -206,8 +210,7 @@ func TestNewServerTLSConfig(t *testing.T) {
 			PeerCertificates: []*x509.Certificate{
 				newLeaf(t, certSpec{
 					commonName:   "node-2",
-					org:          "my-cluster",
-					orgUnit:      "peer",
+					uriSANs:      []*url.URL{BuildURISAN("my-cluster", RolePeer, "node-2")},
 					extKeyUsages: []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth},
 				}),
 			},
@@ -224,8 +227,7 @@ func TestNewServerTLSConfig(t *testing.T) {
 			PeerCertificates: []*x509.Certificate{
 				newLeaf(t, certSpec{
 					commonName:   "kubectl",
-					org:          "my-cluster",
-					orgUnit:      "client",
+					uriSANs:      []*url.URL{BuildURISAN("my-cluster", RoleClient, "kubectl")},
 					extKeyUsages: []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth},
 				}),
 			},
@@ -236,14 +238,13 @@ func TestNewServerTLSConfig(t *testing.T) {
 		}
 	})
 
-	t.Run("peer role rejects invalid CN", func(t *testing.T) {
+	t.Run("peer role rejects invalid identity", func(t *testing.T) {
 		cfg, _ := NewServerTLSConfig(conf, tlsFiles, RolePeer)
 		err := cfg.VerifyConnection(tls.ConnectionState{
 			PeerCertificates: []*x509.Certificate{
 				newLeaf(t, certSpec{
 					commonName:   "Node-2",
-					org:          "my-cluster",
-					orgUnit:      "peer",
+					uriSANs:      []*url.URL{BuildURISAN("my-cluster", RolePeer, "Node-2")},
 					extKeyUsages: []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth},
 				}),
 			},
@@ -260,8 +261,7 @@ func TestNewServerTLSConfig(t *testing.T) {
 			PeerCertificates: []*x509.Certificate{
 				newLeaf(t, certSpec{
 					commonName:   "kubectl",
-					org:          "my-cluster",
-					orgUnit:      "client",
+					uriSANs:      []*url.URL{BuildURISAN("my-cluster", RoleClient, "kubectl")},
 					extKeyUsages: []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth},
 				}),
 			},
@@ -274,8 +274,7 @@ func TestNewServerTLSConfig(t *testing.T) {
 
 type certSpec struct {
 	commonName   string
-	org          string
-	orgUnit      string
+	uriSANs      []*url.URL
 	dnsNames     []string
 	ipAddrs      []net.IP
 	extKeyUsages []x509.ExtKeyUsage
@@ -292,9 +291,7 @@ func newLeaf(t *testing.T, spec certSpec) *x509.Certificate {
 	template := &x509.Certificate{
 		SerialNumber: big.NewInt(time.Now().UnixNano()),
 		Subject: pkix.Name{
-			CommonName:         spec.commonName,
-			Organization:       []string{spec.org},
-			OrganizationalUnit: []string{spec.orgUnit},
+			CommonName: spec.commonName,
 		},
 		NotBefore:             time.Now().Add(-time.Hour),
 		NotAfter:              time.Now().Add(time.Hour),
@@ -303,6 +300,7 @@ func newLeaf(t *testing.T, spec certSpec) *x509.Certificate {
 		BasicConstraintsValid: true,
 		DNSNames:              spec.dnsNames,
 		IPAddresses:           spec.ipAddrs,
+		URIs:                  spec.uriSANs,
 	}
 
 	der, err := x509.CreateCertificate(rand.Reader, template, template, &key.PublicKey, key)

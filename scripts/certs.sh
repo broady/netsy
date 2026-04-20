@@ -10,13 +10,13 @@
 #
 # Generated files in temp/certs/:
 #
-#   File                  OU      CN           Purpose
-#   ─────────────────────────────────────────────────────────────────────
-#   ca.crt / ca.key       —       dev-cluster  Cluster CA (signs all certs)
-#   server.crt / .key     peer    dev-node     Node gRPC server (Client, Peer, election APIs)
-#   peer.crt / .key       peer    dev-node     Node connecting to other Nodes' Peer API
-#   client.crt / .key     client  etcd-client  External tools (etcdctl, kube-apiserver)
-#   service-account.key   —       —            Kubernetes service account signing key
+#   File                  CN           URI SAN                                    Purpose
+#   ──────────────────────────────────────────────────────────────────────────────────────────────
+#   ca.crt / ca.key       dev-cluster  —                                          Cluster CA (signs all certs)
+#   server.crt / .key     dev-node     netsy://dev-cluster/peer/dev-node          Node gRPC server (Client, Peer, election APIs)
+#   peer.crt / .key       dev-node     netsy://dev-cluster/peer/dev-node          Node connecting to other Nodes' Peer API
+#   client.crt / .key     etcd-client  netsy://dev-cluster/client/etcd-client     External tools (etcdctl, kube-apiserver)
+#   service-account.key   —            —                                          Kubernetes service account signing key
 #
 set -eo pipefail
 
@@ -54,7 +54,7 @@ openssl req -x509 -new -nodes \
     -out "${CERTS_DIR}/ca.crt" \
     -subj "/O=${CLUSTER_ID}/CN=${CLUSTER_ID}-ca"
 
-# --- Server certificate (O=cluster, OU=peer, CN=node) ---
+# --- Server certificate (CN=node, URI SAN=netsy://cluster/peer/node) ---
 echo "Generating server certificate..."
 cat > "${CERTS_DIR}/server.cnf" <<EOF
 [req]
@@ -63,8 +63,6 @@ req_extensions = v3_req
 prompt = no
 
 [req_dn]
-O = ${CLUSTER_ID}
-OU = peer
 CN = ${NODE_ID}
 
 [v3_req]
@@ -77,6 +75,7 @@ DNS.1 = localhost
 DNS.2 = host.containers.internal
 IP.1 = 127.0.0.1
 IP.2 = ::1
+URI.1 = netsy://${CLUSTER_ID}/peer/${NODE_ID}
 EOF
 
 openssl genrsa -out "${CERTS_DIR}/server.key" 4096 2>/dev/null
@@ -95,7 +94,7 @@ openssl x509 -req \
     -extensions v3_req \
     -extfile "${CERTS_DIR}/server.cnf"
 
-# --- Peer client certificate (O=cluster, OU=peer, CN=node) ---
+# --- Peer client certificate (CN=node, URI SAN=netsy://cluster/peer/node) ---
 echo "Generating peer client certificate..."
 cat > "${CERTS_DIR}/peer.cnf" <<EOF
 [req]
@@ -104,13 +103,15 @@ req_extensions = v3_req
 prompt = no
 
 [req_dn]
-O = ${CLUSTER_ID}
-OU = peer
 CN = ${NODE_ID}
 
 [v3_req]
 keyUsage = digitalSignature
 extendedKeyUsage = clientAuth
+subjectAltName = @alt_names
+
+[alt_names]
+URI.1 = netsy://${CLUSTER_ID}/peer/${NODE_ID}
 EOF
 
 openssl genrsa -out "${CERTS_DIR}/peer.key" 4096 2>/dev/null
@@ -129,7 +130,7 @@ openssl x509 -req \
     -extensions v3_req \
     -extfile "${CERTS_DIR}/peer.cnf"
 
-# --- External client certificate (O=cluster, OU=client, CN=etcd-client) ---
+# --- External client certificate (CN=etcd-client, URI SAN=netsy://cluster/client/etcd-client) ---
 echo "Generating client certificate..."
 cat > "${CERTS_DIR}/client.cnf" <<EOF
 [req]
@@ -138,13 +139,15 @@ req_extensions = v3_req
 prompt = no
 
 [req_dn]
-O = ${CLUSTER_ID}
-OU = client
 CN = etcd-client
 
 [v3_req]
 keyUsage = digitalSignature
 extendedKeyUsage = clientAuth
+subjectAltName = @alt_names
+
+[alt_names]
+URI.1 = netsy://${CLUSTER_ID}/client/etcd-client
 EOF
 
 openssl genrsa -out "${CERTS_DIR}/client.key" 4096 2>/dev/null

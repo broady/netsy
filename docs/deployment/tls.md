@@ -16,20 +16,37 @@ Presented client certificates embed a role of either `peer` or `client`, and Net
 
 All TLS certificates in a Netsy cluster must be signed by the same Certificate Authority (CA).
 
-### Identity Fields
+### Identity via URI SANs
 
-Certificates used for peer-to-peer communication and client authentication embed identity and role information that Netsy validates during mTLS authentication:
+A TLS certificate can carry Subject Alternative Names (SANs) — additional identifiers beyond the certificate's subject line. SANs are commonly DNS names or IP addresses, but they can also be URIs. A URI SAN embeds a structured identifier inside the certificate itself, so the receiving side can parse it to learn *who* is connecting without relying on out-of-band configuration.
 
-- **Organization (O)**: must match the `cluster_id` configured on the Node. This prevents Nodes and Clients from accidentally joining/connecting to the wrong cluster, even if multiple clusters share the same CA.
-- **Organizational Unit (OU)**: must be the Role, either `peer` or `client`
-  - `peer` certificates: identify a cluster Node and are used for Node-to-Node communication connecting to the Peer API.
-  - `client` certificates: identify an external "etcd client" connecting to the Client API.
-- **Common Name (CN)**: the identifier of the Peer/Client
-  - for Nodes, must match the `node_id` configured on the Node. This prevents impersonation of other Nodes.
+Netsy identifies certificates using a URI SAN with the format:
 
-### Client API Client Certificates
+```
+netsy://{cluster_id}/{role}/{identity}
+```
 
-External "etcd clients" are not cluster Nodes. When a Client connects to the Client API with mTLS, Netsy verifies that the certificate chains to the configured CA and has the `client` role. Only `peer` certificates are required to match a Node's `node_id`.
+| Component | Description | Example |
+|---|---|---|
+| `cluster_id` | Cluster ID (must match Node config) | `my-cluster` |
+| `role` | Certificate role | `peer` or `client` |
+| `identity` | Peer: `node_id`, Client: arbitrary identifier | `node-1`, `my-app` |
+
+**Peer certificates** (Node-to-Node):
+
+```
+netsy://my-cluster/peer/node-1
+```
+
+The identity component must match the node's configured `node_id`.
+
+**Client certificates** (external etcd clients):
+
+```
+netsy://my-cluster/client/kube-apiserver
+```
+
+The identity component is an arbitrary client identifier — no `node_id` matching is required.
 
 ### Validation Rules
 
@@ -43,20 +60,24 @@ Both `cluster_id` and `node_id` must be:
 
 Used by a Node on the Client API and Peer API gRPC servers. Must include:
 
-- **Subject**: `O={cluster_id}, OU=peer, CN={node_id}`
+- **URI SAN**: `netsy://{cluster_id}/peer/{node_id}`
 - **Subject Alternative Names (SANs)**: the advertise addresses and any literal hostnames/IPs that peers or clients actually dial for this Node (Client API, Peer API, and Elector/s3lect peer and health server)
 - **Key Usage**: Digital Signature, Key Encipherment
 - **Extended Key Usage**: TLS Web Server Authentication
 
-At startup, Netsy validates that the peer-certificate subject matches the configured `node_id` / `cluster_id`, and that the server certificate SANs cover the configured Client, Peer, and election advertise addresses.
+At startup, Netsy validates that the certificate identity matches the configured `node_id` / `cluster_id`, and that the server certificate SANs cover the configured Client, Peer, and election advertise addresses.
 
 ### Node Client Certificate
 
 Used by a Node when connecting to other Peer gRPC servers. Must include:
 
-- **Subject**: `O={cluster_id}, OU=peer, CN={node_id}`
+- **URI SAN**: `netsy://{cluster_id}/peer/{node_id}`
 - **Key Usage**: Digital Signature
 - **Extended Key Usage**: TLS Web Client Authentication
+
+### Client API Client Certificates
+
+External "etcd clients" are not cluster Nodes. When a Client connects to the Client API with mTLS, Netsy verifies the URI SAN has the `client` role and the correct `cluster_id`. Only `peer` certificates are required to match a Node's `node_id`.
 
 ## Generating Certificates with OpenSSL
 
@@ -105,8 +126,6 @@ req_extensions = v3_req
 prompt = no
 
 [req_dn]
-O = ${CLUSTER_ID}
-OU = peer
 CN = ${NODE_ID}
 
 [v3_req]
@@ -124,6 +143,7 @@ IP.6 = ${ELECTOR_ADDR_IP6}
 IP.7 = 127.0.0.1
 IP.8 = ::1
 DNS.1 = localhost
+URI.1 = netsy://${CLUSTER_ID}/peer/${NODE_ID}
 EOF
 ```
 
@@ -161,13 +181,15 @@ req_extensions = v3_req
 prompt = no
 
 [req_dn]
-O = ${CLUSTER_ID}
-OU = peer
 CN = ${NODE_ID}
 
 [v3_req]
 keyUsage = digitalSignature
 extendedKeyUsage = clientAuth
+subjectAltName = @alt_names
+
+[alt_names]
+URI.1 = netsy://${CLUSTER_ID}/peer/${NODE_ID}
 EOF
 ```
 
@@ -200,11 +222,13 @@ Verify the subject fields and SANs are correct:
 ```bash
 # Check server certificate
 openssl x509 -in server.crt -noout -subject -ext subjectAltName
-# Expected: subject=O=my-cluster, OU=peer, CN=node-1
+# Expected: subject=CN=node-1
+# Expected SAN: URI:netsy://my-cluster/peer/node-1, IP:..., DNS:localhost
 
 # Check client certificate
-openssl x509 -in client.crt -noout -subject
-# Expected: subject=O=my-cluster, OU=peer, CN=node-1
+openssl x509 -in client.crt -noout -subject -ext subjectAltName
+# Expected: subject=CN=node-1
+# Expected SAN: URI:netsy://my-cluster/peer/node-1
 
 # Verify both are signed by the CA
 openssl verify -CAfile ca.crt server.crt
