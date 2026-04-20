@@ -82,7 +82,7 @@ func NewServer(
 		clusterID:           clusterID,
 		store:               store,
 		state:               state,
-		nodeMap:              NewNodeMap(logger.With("component", "node-map")),
+		nodeMap:             NewNodeMap(logger.With("component", "node-map")),
 		deregTimeout:        deregTimeout,
 		heartbeatInterval:   heartbeatInterval,
 		degradationCount:    degradationCount,
@@ -286,5 +286,3 @@ func (s *Server) allocateOrReuseMemberID(ctx context.Context, nodeID string) (me
 	}
 	return 0, fmt.Errorf("failed to allocate member_id after %d retries", maxRetries)
 }
-
-

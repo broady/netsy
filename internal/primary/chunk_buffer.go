@@ -267,5 +267,3 @@ func (b *chunkBuffer) transitionToDraining(cause error) {
 		"error", cause,
 	)
 }
-
-

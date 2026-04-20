@@ -21,7 +21,7 @@ func newTestServer(t *testing.T, state *nodestate.State, heartbeatInterval time.
 		logger:            slog.Default(),
 		state:             state,
 		replicas:          NewReplicas(),
-		followStreams:      make(map[string]*followSession),
+		followStreams:     make(map[string]*followSession),
 		heartbeatInterval: heartbeatInterval,
 		degradationCount:  degradationCount,
 	}
@@ -140,7 +140,7 @@ func TestGracefulDrainActivePrimary(t *testing.T) {
 		chunkBuffer: newChunkBuffer(
 			slog.Default(), state, store, "node-a", 0, 0, nil,
 		),
-		replicas:     NewReplicas(),
+		replicas:      NewReplicas(),
 		followStreams: make(map[string]*followSession),
 	}
 
@@ -184,7 +184,7 @@ func TestGracefulShutdownFlushesBeforeDeregister(t *testing.T) {
 		chunkBuffer: newChunkBuffer(
 			slog.Default(), state, store, "node-a", 0, 0, nil,
 		),
-		replicas:     NewReplicas(),
+		replicas:      NewReplicas(),
 		followStreams: make(map[string]*followSession),
 	}
 

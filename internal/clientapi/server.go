@@ -41,16 +41,16 @@ type memberLister interface {
 // * Auth
 // we include the 'Unimplemented' services by default and override them where required
 type ClientAPIServer struct {
-	logger        *slog.Logger
-	config        *config.Config
-	db            localdb.Database
-	grpcServer    *grpc.Server
-	state         *nodestate.State
-	peerServer    *primary.Server
-	peerClients   *peerclient.Manager
-	watchManager  *watch.Manager
-	memberLister  memberLister
-	metrics       *Metrics
+	logger       *slog.Logger
+	config       *config.Config
+	db           localdb.Database
+	grpcServer   *grpc.Server
+	state        *nodestate.State
+	peerServer   *primary.Server
+	peerClients  *peerclient.Manager
+	watchManager *watch.Manager
+	memberLister memberLister
+	metrics      *Metrics
 
 	pb.UnimplementedKVServer
 	pb.UnimplementedWatchServer
@@ -65,16 +65,16 @@ type ClientAPIServer struct {
 // nodes proxy MemberList requests to the Elector via peerClients.
 func NewServer(logger *slog.Logger, conf *config.Config, db localdb.Database, grpcServer *grpc.Server, peerServer *primary.Server, peerClients *peerclient.Manager, watchManager *watch.Manager, state *nodestate.State, ml memberLister, m *Metrics) *ClientAPIServer {
 	clientServer := &ClientAPIServer{
-		logger:        logger,
-		config:        conf,
-		grpcServer:    grpcServer,
-		db:            db,
-		state:         state,
-		peerServer:    peerServer,
-		peerClients:   peerClients,
-		watchManager:  watchManager,
-		memberLister:  ml,
-		metrics:       m,
+		logger:       logger,
+		config:       conf,
+		grpcServer:   grpcServer,
+		db:           db,
+		state:        state,
+		peerServer:   peerServer,
+		peerClients:  peerClients,
+		watchManager: watchManager,
+		memberLister: ml,
+		metrics:      m,
 	}
 
 	pb.RegisterKVServer(grpcServer, clientServer)

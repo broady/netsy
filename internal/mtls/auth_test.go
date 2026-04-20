@@ -21,10 +21,10 @@ import (
 
 func TestValidateLocalNodeCertificates(t *testing.T) {
 	serverCert := newLeaf(t, certSpec{
-		commonName: "node-1",
-		uriSANs:    []*url.URL{BuildURISAN("my-cluster", RolePeer, "node-1")},
-		dnsNames:   []string{"node-1.example.internal"},
-		ipAddrs:    []net.IP{net.ParseIP("172.16.0.1")},
+		commonName:   "node-1",
+		uriSANs:      []*url.URL{BuildURISAN("my-cluster", RolePeer, "node-1")},
+		dnsNames:     []string{"node-1.example.internal"},
+		ipAddrs:      []net.IP{net.ParseIP("172.16.0.1")},
 		extKeyUsages: []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
 	})
 	clientCert := newLeaf(t, certSpec{

@@ -21,7 +21,7 @@ func (db *database) BeginTx() (*Tx, error) {
 	if err != nil {
 		return nil, fmt.Errorf("failed to begin transaction: %w", err)
 	}
-	
+
 	return &Tx{
 		tx: sqlTx,
 		db: db,
@@ -33,7 +33,7 @@ func (tx *Tx) Commit() error {
 	if tx.tx == nil {
 		return fmt.Errorf("transaction already committed or rolled back")
 	}
-	
+
 	err := tx.tx.Commit()
 	tx.tx = nil // Mark as completed
 	if err != nil {
@@ -47,7 +47,7 @@ func (tx *Tx) Rollback() error {
 	if tx.tx == nil {
 		return nil // Already completed
 	}
-	
+
 	err := tx.tx.Rollback()
 	tx.tx = nil // Mark as completed
 	return err

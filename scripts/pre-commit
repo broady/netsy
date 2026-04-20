@@ -24,6 +24,6 @@ fi
 
 # Lint
 echo "Running lint..."
-make lint
+go tool golangci-lint run
 
 echo "Pre-commit checks passed."

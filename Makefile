@@ -61,7 +61,7 @@ check: ## Verify required tools are installed
 git-hooks: ## Install git hooks
 	@command -v go >/dev/null 2>&1 || { echo "go is required but not installed"; exit 1; }
 	@command -v shellcheck >/dev/null 2>&1 || { echo "shellcheck is required but not installed"; exit 1; }
-	@command -v golangci-lint >/dev/null 2>&1 || { echo "golangci-lint is required but not installed"; exit 1; }
+	@go tool golangci-lint version >/dev/null 2>&1 || { echo "golangci-lint is required (run 'go get -tool github.com/golangci/golangci-lint/cmd/golangci-lint@latest')"; exit 1; }
 	@cp scripts/pre-commit .git/hooks/pre-commit
 	@chmod +x .git/hooks/pre-commit
 	@echo "Git hooks installed."
@@ -70,7 +70,7 @@ fmt: ## Format Go source files
 	@go fmt ./...
 
 lint: ## Run linter
-	@golangci-lint run
+	@go tool golangci-lint run
 
 test: ## Run tests with race detector
 	go test -v -race ./...

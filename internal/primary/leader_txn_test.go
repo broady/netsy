@@ -1342,7 +1342,7 @@ func TestAmbiguousCommitTransitionsToDraining(t *testing.T) {
 		storageClient:        store,
 		state:                state,
 		replicas:             NewReplicas(),
-		followStreams:         make(map[string]*followSession),
+		followStreams:        make(map[string]*followSession),
 		quorumReceiptTimeout: time.Second,
 	}
 	srv.chunkBuffer = newChunkBuffer(slog.Default(), state, store, cfg.NodeID, 0, 0, nil)

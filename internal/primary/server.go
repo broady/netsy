@@ -60,8 +60,8 @@ type Server struct {
 	degradationCount     int
 	quorumReceiptTimeout time.Duration
 	compactionMetrics    *metrics.CompactionMetrics
-	retryMetrics      *metrics.RetryMetrics
-	storageMetrics    *metrics.ObjectStorageMetrics
+	retryMetrics         *metrics.RetryMetrics
+	storageMetrics       *metrics.ObjectStorageMetrics
 
 	lastWritePath string
 
@@ -79,7 +79,6 @@ type Server struct {
 	// collector.
 	receiptCollector   *receiptCollector
 	receiptCollectorMu sync.Mutex
-
 }
 
 // NewServer constructs the Primary server and seeds its next revision
@@ -101,19 +100,19 @@ func NewServer(
 	storageMetrics *metrics.ObjectStorageMetrics,
 ) (*Server, error) {
 	s := &Server{
-		logger:            logger,
-		config:            conf,
-		db:                db,
-		storageClient:     storageClient,
-		snapshotWorker:    snapshotWorker,
-		state:             state,
-		peerClients:       peerClients,
-		watchManager:      watchManager,
-		metrics:           m,
-		replicas:          NewReplicas(),
-		followStreams:      make(map[string]*followSession),
-		compactionMetrics: compactionMetrics,
-		retryMetrics:      retryMetrics,
+		logger:               logger,
+		config:               conf,
+		db:                   db,
+		storageClient:        storageClient,
+		snapshotWorker:       snapshotWorker,
+		state:                state,
+		peerClients:          peerClients,
+		watchManager:         watchManager,
+		metrics:              m,
+		replicas:             NewReplicas(),
+		followStreams:        make(map[string]*followSession),
+		compactionMetrics:    compactionMetrics,
+		retryMetrics:         retryMetrics,
 		storageMetrics:       storageMetrics,
 		quorumReceiptTimeout: defaultQuorumReceiptTimeout,
 		chunkBuffer: newChunkBuffer(
