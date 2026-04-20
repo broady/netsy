@@ -14,20 +14,20 @@ VERSION=$(curl -s https://api.github.com/repos/kubernetes/kubernetes/releases/la
 
 # Run kube-apiserver container
 CONTAINER_NAME=kube-apiserver
-trap "docker stop $CONTAINER_NAME >/dev/null; docker rm $CONTAINER_NAME >/dev/null; exit" INT
+trap 'docker stop $CONTAINER_NAME >/dev/null; docker rm $CONTAINER_NAME >/dev/null; exit' INT
 docker run -d --name $CONTAINER_NAME \
   --entrypoint kube-apiserver \
   -v "${CURRENT}/../temp/certs:/opt/netsy-certs:ro" \
   -p 8080:8080 \
   -p 6443:6443 \
-  registry.k8s.io/kube-apiserver:$VERSION \
+  "registry.k8s.io/kube-apiserver:${VERSION}" \
   --etcd-servers=https://host.containers.internal:2378 \
   --etcd-certfile=/opt/netsy-certs/client.crt \
   --etcd-keyfile=/opt/netsy-certs/client.key \
   --etcd-cafile=/opt/netsy-certs/ca.crt \
   --client-ca-file=/opt/netsy-certs/ca.crt \
-  --tls-cert-file=/opt/netsy-certs/server.crt \
-  --tls-private-key-file=/opt/netsy-certs/server.key \
+  --tls-cert-file=/opt/netsy-certs/kube-apiserver.crt \
+  --tls-private-key-file=/opt/netsy-certs/kube-apiserver.key \
   --service-cluster-ip-range=10.0.0.0/24 \
   --service-account-issuer=https://kubernetes.default.svc \
   --service-account-signing-key-file=/opt/netsy-certs/service-account.key \

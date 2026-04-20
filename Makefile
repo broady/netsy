@@ -47,7 +47,10 @@ else ifeq ($(GOOS),darwin)
 	endif
 endif
 
-.PHONY: help check git-hooks fmt lint test build proto clean dev clean-dev image
+# Number of dev instances
+NETSY_COUNT ?= 1
+
+.PHONY: help check git-hooks fmt lint test build proto clean dev restart-dev clean-dev image
 
 help: ## Show available targets
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-15s\033[0m %s\n", $$1, $$2}'
@@ -101,9 +104,14 @@ proto: ## Generate Go files from protobuf definitions
 clean: ## Remove build artifacts
 	rm -rf $(BINDIR)
 
-dev: ## Start development environment (fake S3 + Air)
-	@test -f temp/certs/ca.crt || ./scripts/certs.sh
-	overmind start
+dev: ## Start development environment (NETSY_COUNT=N for multiple instances)
+	@test -f temp/certs/ca.crt || ./scripts/certs.sh $(NETSY_COUNT)
+	@if [ "$(NETSY_COUNT)" -gt 1 ]; then $(MAKE) build; fi
+	@./scripts/check-ports.sh $(NETSY_COUNT)
+	OVERMIND_FORMATION=s3=1,netsy=$(NETSY_COUNT) overmind start
+
+restart-dev: ## Restart all Netsy instances (use after 'make build')
+	@overmind restart netsy
 
 clean-dev: ## Stop development environment and remove temp files
 	@-overmind quit 2>/dev/null

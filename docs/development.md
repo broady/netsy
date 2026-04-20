@@ -26,22 +26,113 @@ make dev
 
 This will:
 1. Generate development TLS certificates in `temp/certs/` if they don't exist
-2. Start the fake S3 server (`cmd/dev-s3`) on `:4566`
-3. Start Netsy via Air for live reload
+2. Check that all required ports are available
+3. Start the fake S3 server (`cmd/dev-s3`) on `:4566`
+4. Start Netsy via Air for live reload
 
 Cluster config is loaded from `examples/config.jsonc`.
+
+## Multi-Instance Dev
+
+Run multiple Netsy instances to test clustering, replication, and leader
+election locally:
+
+```
+make dev NETSY_COUNT=3
+```
+
+This will:
+1. Generate per-instance TLS certificates for `dev-node-1` through `dev-node-3`
+2. Build the `netsy` binary
+3. Check that all required ports are available
+4. Start 3 Netsy instances under Overmind
+
+Each instance gets a unique node ID, data directory, port set, log file, and
+TLS certificates. Instance 1 keeps the default ports so existing helper scripts
+continue to work unchanged.
+
+### Port Scheme
+
+Ports use a fixed step of 10 per instance:
+
+| Port      | Instance 1 | Instance 2 | Instance 3 |
+|-----------|-----------|-----------|-----------|
+| Client    | 2378      | 2388      | 2398      |
+| Peer      | 2381      | 2391      | 2401      |
+| Election  | 8443      | 8453      | 8463      |
+| Health    | 8080      | 8090      | 8100      |
+
+Formula: `port = base + (N - 1) * 10`
+
+### Iterating in Multi-Instance Mode
+
+Multi-instance mode does not use Air for hot reload. Instead, rebuild and
+restart:
+
+```
+make build restart-dev
+```
+
+This rebuilds the binary and restarts all Netsy instances managed by Overmind.
+
+### Cluster Formation
+
+Netsy uses object-storage-based service discovery. Each node registers itself
+by writing to `nodes/{node_id}.json` in S3, and the Elector bootstraps
+membership by scanning the `nodes/` prefix. There is no static peer list.
+
+This means multi-node local dev forms a cluster automatically, as long as
+each instance has a unique `node_id`, unique advertise addresses, and matching
+TLS certs, they will discover each other through the shared dev S3 bucket.
+No peer configuration is needed.
 
 ## Viewing Logs
 
 Logs are written to `temp/logs/`:
 - `temp/logs/dev-s3.log` — fake S3 server
-- `temp/logs/netsy.log` — Netsy server
+- `temp/logs/netsy-1.log` — Netsy instance 1
+- `temp/logs/netsy-2.log` — Netsy instance 2 (scaled mode)
+- etc.
 
 To view logs from a specific process in real-time:
 
 ```
 overmind echo netsy
 overmind echo s3
+```
+
+## TLS Certificates
+
+Development certificates are generated automatically by `make dev`. The
+certificate layout:
+
+```
+temp/certs/
+├── ca.crt                      # Shared dev CA
+├── ca.key
+├── client.crt                  # Shared external client cert (etcdctl, kube-apiserver)
+├── client.key
+├── service-account.key         # Kubernetes service account signing key
+├── dev-node-1/
+│   ├── server.crt / .key       # Instance 1 server cert (URI SAN: netsy://dev-cluster/peer/dev-node-1)
+│   └── peer.crt / .key         # Instance 1 peer client cert
+├── dev-node-2/
+│   ├── server.crt / .key
+│   └── peer.crt / .key
+└── ...
+```
+
+Generate certs manually:
+
+```
+./scripts/certs.sh        # 1 instance (default)
+./scripts/certs.sh 3      # 3 instances
+```
+
+Regenerate all certificates:
+
+```
+rm -rf temp/certs/ && ./scripts/certs.sh 3
 ```
 
 ## Resetting Dev Data
@@ -52,22 +143,16 @@ Reset everything (certs, database, S3 data, logs):
 make clean-dev && make dev
 ```
 
-Reset only the database:
+Reset only the database (instance 1):
 
 ```
-rm -f temp/data/db.sqlite3*
+rm -f temp/data-1/db.sqlite3*
 ```
 
 Reset only S3 data:
 
 ```
 rm -rf temp/dev-s3/
-```
-
-Regenerate only TLS certificates:
-
-```
-rm -rf temp/certs/ && ./scripts/certs.sh
 ```
 
 ## Testing with kube-apiserver
@@ -79,6 +164,7 @@ Run a kube-apiserver container configured to use Netsy as its etcd backend:
 ```
 
 Press `Ctrl+C` to stop. Requires a running Netsy instance (`make dev`).
+Helper scripts use instance 1 ports by default.
 
 ## etcdctl
 
@@ -88,6 +174,8 @@ Run `etcdctl` with the correct certs and endpoint:
 ./scripts/etcdctl.sh endpoint status
 ./scripts/etcdctl.sh get "" --prefix
 ```
+
+Helper scripts use instance 1 ports by default.
 
 ## Git Hooks
 
