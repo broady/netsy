@@ -9,7 +9,7 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/nadrama-com/netsy/internal/storage"
+	"github.com/netsy-dev/netsy/internal/storage"
 )
 
 // Upload uploads a local file to object storage at the given key

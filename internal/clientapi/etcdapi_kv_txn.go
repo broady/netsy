@@ -12,9 +12,9 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
-	"github.com/nadrama-com/netsy/internal/localdb"
-	"github.com/nadrama-com/netsy/internal/primary"
-	"github.com/nadrama-com/netsy/internal/proto"
+	"github.com/netsy-dev/netsy/internal/localdb"
+	"github.com/netsy-dev/netsy/internal/primary"
+	"github.com/netsy-dev/netsy/internal/proto"
 	pb "go.etcd.io/etcd/api/v3/etcdserverpb"
 )
 

@@ -11,11 +11,11 @@ import (
 	"testing"
 	"time"
 
-	"github.com/nadrama-com/netsy/internal/config"
-	"github.com/nadrama-com/netsy/internal/localdb"
-	"github.com/nadrama-com/netsy/internal/nodestate"
-	"github.com/nadrama-com/netsy/internal/proto"
-	"github.com/nadrama-com/netsy/internal/storage"
+	"github.com/netsy-dev/netsy/internal/config"
+	"github.com/netsy-dev/netsy/internal/localdb"
+	"github.com/netsy-dev/netsy/internal/nodestate"
+	"github.com/netsy-dev/netsy/internal/proto"
+	"github.com/netsy-dev/netsy/internal/storage"
 	pb "go.etcd.io/etcd/api/v3/etcdserverpb"
 	"go.etcd.io/etcd/api/v3/mvccpb"
 )

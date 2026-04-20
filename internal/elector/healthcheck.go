@@ -8,8 +8,8 @@ import (
 	"context"
 	"time"
 
-	"github.com/nadrama-com/netsy/internal/discovery"
-	"github.com/nadrama-com/netsy/internal/nodestate"
+	"github.com/netsy-dev/netsy/internal/discovery"
+	"github.com/netsy-dev/netsy/internal/nodestate"
 )
 
 // healthCheckInterval is how often the Elector checks node health. This

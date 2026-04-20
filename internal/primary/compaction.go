@@ -8,7 +8,7 @@ import (
 	"context"
 	"time"
 
-	"github.com/nadrama-com/netsy/internal/discovery"
+	"github.com/netsy-dev/netsy/internal/discovery"
 )
 
 // compactionNoticeTimeout is the per-node timeout for sending a

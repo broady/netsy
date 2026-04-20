@@ -9,7 +9,7 @@ import (
 	"encoding/json"
 	"fmt"
 
-	"github.com/nadrama-com/netsy/internal/storage"
+	"github.com/netsy-dev/netsy/internal/storage"
 )
 
 const membersFilePath = "members.json"

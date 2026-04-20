@@ -8,8 +8,8 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/nadrama-com/netsy/internal/buildvars"
-	"github.com/nadrama-com/netsy/internal/nodestate"
+	"github.com/netsy-dev/netsy/internal/buildvars"
+	"github.com/netsy-dev/netsy/internal/nodestate"
 
 	pb "go.etcd.io/etcd/api/v3/etcdserverpb"
 	"google.golang.org/grpc/codes"

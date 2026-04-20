@@ -14,12 +14,12 @@ import (
 
 	"github.com/nadrama-com/s3lect"
 
-	"github.com/nadrama-com/netsy/internal/config"
-	"github.com/nadrama-com/netsy/internal/metrics"
-	"github.com/nadrama-com/netsy/internal/nodestate"
-	"github.com/nadrama-com/netsy/internal/peerclient"
-	"github.com/nadrama-com/netsy/internal/proto"
-	"github.com/nadrama-com/netsy/internal/storage"
+	"github.com/netsy-dev/netsy/internal/config"
+	"github.com/netsy-dev/netsy/internal/metrics"
+	"github.com/netsy-dev/netsy/internal/nodestate"
+	"github.com/netsy-dev/netsy/internal/peerclient"
+	"github.com/netsy-dev/netsy/internal/proto"
+	"github.com/netsy-dev/netsy/internal/storage"
 	"google.golang.org/protobuf/types/known/emptypb"
 )
 

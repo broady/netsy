@@ -9,7 +9,7 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/nadrama-com/netsy/internal/datafile"
+	"github.com/netsy-dev/netsy/internal/datafile"
 	"google.golang.org/protobuf/encoding/protojson"
 )
 

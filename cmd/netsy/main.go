@@ -7,7 +7,7 @@ package main
 import (
 	"os"
 
-	"github.com/nadrama-com/netsy/internal/cmd"
+	"github.com/netsy-dev/netsy/internal/cmd"
 )
 
 func main() {

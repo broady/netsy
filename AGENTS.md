@@ -44,7 +44,7 @@ overmind echo s3
 
 - **File headers**: Include copyright and SPDX license header on all files
 - **Package docs**: use `doc.go` for package-level documentation
-- **Imports**: stdlib → third-party → local (`github.com/nadrama-com/netsy/*`)
+- **Imports**: stdlib → third-party → local (`github.com/netsy-dev/netsy/*`)
 - **Naming**: PascalCase types/methods, camelCase variables, lowercase packages
 - **Errors**: named returns `(result Type, err error)`, early returns, `fmt.Errorf()` wrapping
 - **Comments**: function name first, describe purpose

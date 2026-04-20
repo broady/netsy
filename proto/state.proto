@@ -6,7 +6,7 @@ syntax = "proto3";
 
 package netsy;
 
-option go_package = "github.com/nadrama-com/netsy/internal/proto";
+option go_package = "github.com/netsy-dev/netsy/internal/proto";
 
 // Shared enums and messages used across Elector, Node, and Primary services.
 

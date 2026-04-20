@@ -10,9 +10,9 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/nadrama-com/netsy/internal/datastore"
-	"github.com/nadrama-com/netsy/internal/nodestate"
-	pb "github.com/nadrama-com/netsy/internal/proto"
+	"github.com/netsy-dev/netsy/internal/datastore"
+	"github.com/netsy-dev/netsy/internal/nodestate"
+	pb "github.com/netsy-dev/netsy/internal/proto"
 )
 
 // startPreflightLocked begins or resumes the Primary preflight loop while this

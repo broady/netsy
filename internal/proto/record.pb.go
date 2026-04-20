@@ -204,7 +204,7 @@ const file_proto_record_proto_rawDesc = "" +
 	"\fcompacted_at\x18\r \x01(\v2\x1a.google.protobuf.TimestampR\vcompactedAt\x12\x1b\n" +
 	"\tleader_id\x18\x0e \x01(\tR\bleaderId\x12?\n" +
 	"\rreplicated_at\x18\x0f \x01(\v2\x1a.google.protobuf.TimestampR\freplicatedAt\x12\x10\n" +
-	"\x03crc\x18\x01 \x01(\x04R\x03crcB-Z+github.com/nadrama-com/netsy/internal/protob\x06proto3"
+	"\x03crc\x18\x01 \x01(\x04R\x03crcB+Z)github.com/netsy-dev/netsy/internal/protob\x06proto3"
 
 var (
 	file_proto_record_proto_rawDescOnce sync.Once

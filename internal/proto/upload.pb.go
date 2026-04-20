@@ -131,7 +131,7 @@ const file_proto_upload_proto_rawDesc = "" +
 	"\rlast_revision\x18\x05 \x01(\x03R\flastRevision\x12;\n" +
 	"\vuploaded_at\x18\x06 \x01(\v2\x1a.google.protobuf.TimestampR\n" +
 	"uploadedAt\x12\x1b\n" +
-	"\tleader_id\x18\a \x01(\tR\bleaderIdB-Z+github.com/nadrama-com/netsy/internal/protob\x06proto3"
+	"\tleader_id\x18\a \x01(\tR\bleaderIdB+Z)github.com/netsy-dev/netsy/internal/protob\x06proto3"
 
 var (
 	file_proto_upload_proto_rawDescOnce sync.Once

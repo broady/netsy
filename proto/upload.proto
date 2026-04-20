@@ -9,7 +9,7 @@ package netsy;
 import "proto/file.proto";
 import "google/protobuf/timestamp.proto";
 
-option go_package = "github.com/nadrama-com/netsy/internal/proto";
+option go_package = "github.com/netsy-dev/netsy/internal/proto";
 
 message Upload {
   string key = 1;

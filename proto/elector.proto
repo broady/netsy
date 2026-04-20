@@ -9,7 +9,7 @@ package netsy;
 import "google/protobuf/empty.proto";
 import "proto/state.proto";
 
-option go_package = "github.com/nadrama-com/netsy/internal/proto";
+option go_package = "github.com/netsy-dev/netsy/internal/proto";
 
 // Elector service — hosted by the Elector Node for registration,
 // cluster state queries, and heartbeat collection.

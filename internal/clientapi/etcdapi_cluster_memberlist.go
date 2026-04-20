@@ -7,8 +7,8 @@ package clientapi
 import (
 	"context"
 
-	"github.com/nadrama-com/netsy/internal/nodestate"
-	internalproto "github.com/nadrama-com/netsy/internal/proto"
+	"github.com/netsy-dev/netsy/internal/nodestate"
+	internalproto "github.com/netsy-dev/netsy/internal/proto"
 
 	pb "go.etcd.io/etcd/api/v3/etcdserverpb"
 	"google.golang.org/grpc/codes"

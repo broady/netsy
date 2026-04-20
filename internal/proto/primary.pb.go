@@ -267,7 +267,7 @@ const file_proto_primary_proto_rawDesc = "" +
 	"\theartbeat\x18\x02 \x01(\v2\x10.netsy.NodeStateR\theartbeat2\x80\x01\n" +
 	"\aPrimary\x12:\n" +
 	"\x06Follow\x12\x15.netsy.ReplicaMessage\x1a\x15.netsy.PrimaryMessage(\x010\x01\x129\n" +
-	"\rSendHeartbeat\x12\x10.netsy.NodeState\x1a\x16.google.protobuf.EmptyB-Z+github.com/nadrama-com/netsy/internal/protob\x06proto3"
+	"\rSendHeartbeat\x12\x10.netsy.NodeState\x1a\x16.google.protobuf.EmptyB+Z)github.com/netsy-dev/netsy/internal/protob\x06proto3"
 
 var (
 	file_proto_primary_proto_rawDescOnce sync.Once

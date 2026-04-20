@@ -9,7 +9,7 @@ package netsy;
 import "google/protobuf/empty.proto";
 import "proto/state.proto";
 
-option go_package = "github.com/nadrama-com/netsy/internal/proto";
+option go_package = "github.com/netsy-dev/netsy/internal/proto";
 
 // Node service — hosted by every Node, called by the Elector and Primary
 // for cluster state pushes, node state queries, and compaction coordination.

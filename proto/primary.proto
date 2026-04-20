@@ -10,7 +10,7 @@ import "google/protobuf/empty.proto";
 import "proto/record.proto";
 import "proto/state.proto";
 
-option go_package = "github.com/nadrama-com/netsy/internal/proto";
+option go_package = "github.com/netsy-dev/netsy/internal/proto";
 
 // Primary service — hosted by the Primary Node for replication streaming
 // and standalone heartbeat collection from Replicas.

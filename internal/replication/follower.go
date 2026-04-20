@@ -12,13 +12,13 @@ import (
 	"sync"
 	"time"
 
-	"github.com/nadrama-com/netsy/internal/heartbeat"
-	"github.com/nadrama-com/netsy/internal/localdb"
-	"github.com/nadrama-com/netsy/internal/metrics"
-	"github.com/nadrama-com/netsy/internal/nodestate"
-	"github.com/nadrama-com/netsy/internal/peerclient"
-	"github.com/nadrama-com/netsy/internal/proto"
-	"github.com/nadrama-com/netsy/internal/watch"
+	"github.com/netsy-dev/netsy/internal/heartbeat"
+	"github.com/netsy-dev/netsy/internal/localdb"
+	"github.com/netsy-dev/netsy/internal/metrics"
+	"github.com/netsy-dev/netsy/internal/nodestate"
+	"github.com/netsy-dev/netsy/internal/peerclient"
+	"github.com/netsy-dev/netsy/internal/proto"
+	"github.com/netsy-dev/netsy/internal/watch"
 )
 
 // reconnectDelay is the wait time before retrying a Follow stream

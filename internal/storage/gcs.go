@@ -16,7 +16,7 @@ import (
 	"google.golang.org/api/googleapi"
 	"google.golang.org/api/iterator"
 
-	"github.com/nadrama-com/netsy/internal/config"
+	"github.com/netsy-dev/netsy/internal/config"
 )
 
 // gcsProvider implements ObjectStorage for Google Cloud Storage

@@ -21,7 +21,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/s3/types"
 	"github.com/aws/aws-sdk-go-v2/service/sts"
 
-	"github.com/nadrama-com/netsy/internal/config"
+	"github.com/netsy-dev/netsy/internal/config"
 )
 
 // s3Provider implements ObjectStorage for AWS S3

@@ -15,12 +15,12 @@ import (
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/types/known/emptypb"
 
-	"github.com/nadrama-com/netsy/internal/discovery"
-	"github.com/nadrama-com/netsy/internal/metrics"
-	"github.com/nadrama-com/netsy/internal/nodestate"
-	"github.com/nadrama-com/netsy/internal/peerclient"
-	"github.com/nadrama-com/netsy/internal/proto"
-	"github.com/nadrama-com/netsy/internal/storage"
+	"github.com/netsy-dev/netsy/internal/discovery"
+	"github.com/netsy-dev/netsy/internal/metrics"
+	"github.com/netsy-dev/netsy/internal/nodestate"
+	"github.com/netsy-dev/netsy/internal/peerclient"
+	"github.com/netsy-dev/netsy/internal/proto"
+	"github.com/netsy-dev/netsy/internal/storage"
 )
 
 // RevisionSource provides the latest revision for election tie-breaking.

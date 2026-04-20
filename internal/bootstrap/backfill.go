@@ -10,12 +10,12 @@ import (
 
 	"log/slog"
 
-	"github.com/nadrama-com/netsy/internal/config"
-	"github.com/nadrama-com/netsy/internal/datastore"
-	"github.com/nadrama-com/netsy/internal/localdb"
-	"github.com/nadrama-com/netsy/internal/metrics"
-	pb "github.com/nadrama-com/netsy/internal/proto"
-	"github.com/nadrama-com/netsy/internal/storage"
+	"github.com/netsy-dev/netsy/internal/config"
+	"github.com/netsy-dev/netsy/internal/datastore"
+	"github.com/netsy-dev/netsy/internal/localdb"
+	"github.com/netsy-dev/netsy/internal/metrics"
+	pb "github.com/netsy-dev/netsy/internal/proto"
+	"github.com/netsy-dev/netsy/internal/storage"
 )
 
 // importLatestSnapshot imports the newest durable snapshot into an empty local

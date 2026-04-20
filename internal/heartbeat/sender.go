@@ -11,10 +11,10 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/nadrama-com/netsy/internal/metrics"
-	"github.com/nadrama-com/netsy/internal/nodestate"
-	"github.com/nadrama-com/netsy/internal/peerclient"
-	"github.com/nadrama-com/netsy/internal/proto"
+	"github.com/netsy-dev/netsy/internal/metrics"
+	"github.com/netsy-dev/netsy/internal/nodestate"
+	"github.com/netsy-dev/netsy/internal/peerclient"
+	"github.com/netsy-dev/netsy/internal/proto"
 )
 
 // RevisionSource provides the latest revision for heartbeat messages.

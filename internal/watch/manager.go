@@ -11,7 +11,7 @@ import (
 	"sync"
 	"sync/atomic"
 
-	"github.com/nadrama-com/netsy/internal/proto"
+	"github.com/netsy-dev/netsy/internal/proto"
 	"go.etcd.io/etcd/api/v3/mvccpb"
 
 	pb "go.etcd.io/etcd/api/v3/etcdserverpb"

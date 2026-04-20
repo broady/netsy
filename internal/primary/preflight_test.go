@@ -14,13 +14,13 @@ import (
 
 	"log/slog"
 
-	"github.com/nadrama-com/netsy/internal/config"
-	"github.com/nadrama-com/netsy/internal/datafile"
-	"github.com/nadrama-com/netsy/internal/datastore"
-	"github.com/nadrama-com/netsy/internal/localdb"
-	"github.com/nadrama-com/netsy/internal/nodestate"
-	"github.com/nadrama-com/netsy/internal/proto"
-	"github.com/nadrama-com/netsy/internal/storage"
+	"github.com/netsy-dev/netsy/internal/config"
+	"github.com/netsy-dev/netsy/internal/datafile"
+	"github.com/netsy-dev/netsy/internal/datastore"
+	"github.com/netsy-dev/netsy/internal/localdb"
+	"github.com/netsy-dev/netsy/internal/nodestate"
+	"github.com/netsy-dev/netsy/internal/proto"
+	"github.com/netsy-dev/netsy/internal/storage"
 	"google.golang.org/protobuf/types/known/timestamppb"
 )
 

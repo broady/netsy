@@ -11,7 +11,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/nadrama-com/netsy/internal/nodestate"
+	"github.com/netsy-dev/netsy/internal/nodestate"
 )
 
 // electionRetryInterval is how long the Elector waits between election

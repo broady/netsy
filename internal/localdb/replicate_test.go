@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/nadrama-com/netsy/internal/proto"
+	"github.com/netsy-dev/netsy/internal/proto"
 	"google.golang.org/protobuf/types/known/timestamppb"
 )
 

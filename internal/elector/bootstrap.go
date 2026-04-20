@@ -10,9 +10,9 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/nadrama-com/netsy/internal/discovery"
-	"github.com/nadrama-com/netsy/internal/nodestate"
-	"github.com/nadrama-com/netsy/internal/storage"
+	"github.com/netsy-dev/netsy/internal/discovery"
+	"github.com/netsy-dev/netsy/internal/nodestate"
+	"github.com/netsy-dev/netsy/internal/storage"
 )
 
 // Bootstrap loads the node map from object storage when this node acquires

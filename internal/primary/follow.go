@@ -11,9 +11,9 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
-	"github.com/nadrama-com/netsy/internal/mtls"
-	"github.com/nadrama-com/netsy/internal/nodestate"
-	"github.com/nadrama-com/netsy/internal/proto"
+	"github.com/netsy-dev/netsy/internal/mtls"
+	"github.com/netsy-dev/netsy/internal/nodestate"
+	"github.com/netsy-dev/netsy/internal/proto"
 )
 
 // streamBufferSize is the per-replica outbound message buffer. If a

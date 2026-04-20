@@ -12,8 +12,8 @@ import (
 
 	"github.com/prometheus/client_golang/prometheus"
 
-	"github.com/nadrama-com/netsy/internal/metrics"
-	"github.com/nadrama-com/netsy/internal/nodestate"
+	"github.com/netsy-dev/netsy/internal/metrics"
+	"github.com/netsy-dev/netsy/internal/nodestate"
 )
 
 // Server serves the /health HTTP endpoint.

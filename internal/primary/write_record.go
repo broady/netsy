@@ -10,9 +10,9 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/nadrama-com/netsy/internal/datastore"
-	pb "github.com/nadrama-com/netsy/internal/proto"
-	"github.com/nadrama-com/netsy/internal/storage"
+	"github.com/netsy-dev/netsy/internal/datastore"
+	pb "github.com/netsy-dev/netsy/internal/proto"
+	"github.com/netsy-dev/netsy/internal/storage"
 )
 
 // errChunkAlreadyExists reports that a strict create-only chunk write found an

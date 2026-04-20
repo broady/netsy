@@ -8,7 +8,7 @@ import (
 	"context"
 	"time"
 
-	"github.com/nadrama-com/netsy/internal/commonapi"
+	"github.com/netsy-dev/netsy/internal/commonapi"
 	pb "go.etcd.io/etcd/api/v3/etcdserverpb"
 )
 

@@ -11,10 +11,10 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/nadrama-com/netsy/internal/commonapi"
-	"github.com/nadrama-com/netsy/internal/localdb"
-	"github.com/nadrama-com/netsy/internal/nodestate"
-	"github.com/nadrama-com/netsy/internal/proto"
+	"github.com/netsy-dev/netsy/internal/commonapi"
+	"github.com/netsy-dev/netsy/internal/localdb"
+	"github.com/netsy-dev/netsy/internal/nodestate"
+	"github.com/netsy-dev/netsy/internal/proto"
 	pb "go.etcd.io/etcd/api/v3/etcdserverpb"
 	googlepb "google.golang.org/protobuf/proto"
 )

@@ -9,7 +9,7 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/nadrama-com/netsy/internal/storage"
+	"github.com/netsy-dev/netsy/internal/storage"
 )
 
 func TestReadMembersFile_NotFound(t *testing.T) {

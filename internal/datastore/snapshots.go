@@ -9,7 +9,7 @@ import (
 	"fmt"
 	"sort"
 
-	"github.com/nadrama-com/netsy/internal/storage"
+	"github.com/netsy-dev/netsy/internal/storage"
 )
 
 // LatestSnapshotInfo contains information about the latest snapshot

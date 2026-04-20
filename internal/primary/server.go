@@ -17,15 +17,15 @@ import (
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/types/known/emptypb"
 
-	"github.com/nadrama-com/netsy/internal/config"
-	"github.com/nadrama-com/netsy/internal/localdb"
-	"github.com/nadrama-com/netsy/internal/metrics"
-	"github.com/nadrama-com/netsy/internal/nodestate"
-	"github.com/nadrama-com/netsy/internal/peerclient"
-	"github.com/nadrama-com/netsy/internal/proto"
-	"github.com/nadrama-com/netsy/internal/snapshot"
-	"github.com/nadrama-com/netsy/internal/storage"
-	"github.com/nadrama-com/netsy/internal/watch"
+	"github.com/netsy-dev/netsy/internal/config"
+	"github.com/netsy-dev/netsy/internal/localdb"
+	"github.com/netsy-dev/netsy/internal/metrics"
+	"github.com/netsy-dev/netsy/internal/nodestate"
+	"github.com/netsy-dev/netsy/internal/peerclient"
+	"github.com/netsy-dev/netsy/internal/proto"
+	"github.com/netsy-dev/netsy/internal/snapshot"
+	"github.com/netsy-dev/netsy/internal/storage"
+	"github.com/netsy-dev/netsy/internal/watch"
 )
 
 // Server implements the Primary domain layer and the proto.PrimaryServer

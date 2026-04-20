@@ -429,7 +429,7 @@ const file_proto_state_proto_rawDesc = "" +
 	"\x0fPRIMARY_REPLICA\x10\x01\x12\x14\n" +
 	"\x10PRIMARY_STARTING\x10\x02\x12\x12\n" +
 	"\x0ePRIMARY_ACTIVE\x10\x03\x12\x14\n" +
-	"\x10PRIMARY_DRAINING\x10\x04B-Z+github.com/nadrama-com/netsy/internal/protob\x06proto3"
+	"\x10PRIMARY_DRAINING\x10\x04B+Z)github.com/netsy-dev/netsy/internal/protob\x06proto3"
 
 var (
 	file_proto_state_proto_rawDescOnce sync.Once

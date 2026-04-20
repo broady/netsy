@@ -1,4 +1,4 @@
-module github.com/nadrama-com/netsy
+module github.com/netsy-dev/netsy
 
 go 1.25.0
 

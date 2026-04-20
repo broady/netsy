@@ -14,7 +14,7 @@ import (
 	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/peer"
 
-	"github.com/nadrama-com/netsy/internal/config"
+	"github.com/netsy-dev/netsy/internal/config"
 )
 
 type Role string

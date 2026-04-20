@@ -8,7 +8,7 @@ package netsy;
 
 import "google/protobuf/timestamp.proto";
 
-option go_package = "github.com/nadrama-com/netsy/internal/proto";
+option go_package = "github.com/netsy-dev/netsy/internal/proto";
 
 message Record {
   int64 revision = 2;

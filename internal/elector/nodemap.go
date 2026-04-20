@@ -9,7 +9,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/nadrama-com/netsy/internal/nodestate"
+	"github.com/netsy-dev/netsy/internal/nodestate"
 )
 
 // NodeEntry represents a registered node in the Elector's node map.

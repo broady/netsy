@@ -8,7 +8,7 @@ import (
 	"fmt"
 	"log/slog"
 
-	"github.com/nadrama-com/netsy/internal/config"
+	"github.com/netsy-dev/netsy/internal/config"
 )
 
 // New creates an ObjectStorage provider based on config.

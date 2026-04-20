@@ -370,7 +370,7 @@ const file_proto_elector_proto_rawDesc = "" +
 	"\x0eDeregisterNode\x12\x1c.netsy.DeregisterNodeRequest\x1a\x16.google.protobuf.Empty\x12>\n" +
 	"\x0fGetClusterState\x12\x16.google.protobuf.Empty\x1a\x13.netsy.ClusterState\x129\n" +
 	"\rSendHeartbeat\x12\x10.netsy.NodeState\x1a\x16.google.protobuf.Empty\x12J\n" +
-	"\rGetMemberList\x12\x1b.netsy.GetMemberListRequest\x1a\x1c.netsy.GetMemberListResponseB-Z+github.com/nadrama-com/netsy/internal/protob\x06proto3"
+	"\rGetMemberList\x12\x1b.netsy.GetMemberListRequest\x1a\x1c.netsy.GetMemberListResponseB+Z)github.com/netsy-dev/netsy/internal/protob\x06proto3"
 
 var (
 	file_proto_elector_proto_rawDescOnce sync.Once

@@ -314,7 +314,7 @@ const file_proto_file_proto_rawDesc = "" +
 	"\x0fFileCompression\x12\x17\n" +
 	"\x13COMPRESSION_UNKNOWN\x10\x00\x12\x14\n" +
 	"\x10COMPRESSION_NONE\x10\x01\x12\x14\n" +
-	"\x10COMPRESSION_ZSTD\x10\x02B-Z+github.com/nadrama-com/netsy/internal/protob\x06proto3"
+	"\x10COMPRESSION_ZSTD\x10\x02B+Z)github.com/netsy-dev/netsy/internal/protob\x06proto3"
 
 var (
 	file_proto_file_proto_rawDescOnce sync.Once

@@ -11,9 +11,9 @@ import (
 	"fmt"
 	"sort"
 
-	"github.com/nadrama-com/netsy/internal/datafile"
-	pb "github.com/nadrama-com/netsy/internal/proto"
-	"github.com/nadrama-com/netsy/internal/storage"
+	"github.com/netsy-dev/netsy/internal/datafile"
+	pb "github.com/netsy-dev/netsy/internal/proto"
+	"github.com/netsy-dev/netsy/internal/storage"
 )
 
 // MarshalChunk serialises a single record into the chunk datafile format,

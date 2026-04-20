@@ -12,16 +12,16 @@ import (
 
 	"google.golang.org/protobuf/types/known/emptypb"
 
-	"github.com/nadrama-com/netsy/internal/config"
-	"github.com/nadrama-com/netsy/internal/datastore"
-	"github.com/nadrama-com/netsy/internal/discovery"
-	"github.com/nadrama-com/netsy/internal/elector"
-	"github.com/nadrama-com/netsy/internal/localdb"
-	"github.com/nadrama-com/netsy/internal/metrics"
-	"github.com/nadrama-com/netsy/internal/nodestate"
-	"github.com/nadrama-com/netsy/internal/peerclient"
-	"github.com/nadrama-com/netsy/internal/proto"
-	"github.com/nadrama-com/netsy/internal/storage"
+	"github.com/netsy-dev/netsy/internal/config"
+	"github.com/netsy-dev/netsy/internal/datastore"
+	"github.com/netsy-dev/netsy/internal/discovery"
+	"github.com/netsy-dev/netsy/internal/elector"
+	"github.com/netsy-dev/netsy/internal/localdb"
+	"github.com/netsy-dev/netsy/internal/metrics"
+	"github.com/netsy-dev/netsy/internal/nodestate"
+	"github.com/netsy-dev/netsy/internal/peerclient"
+	"github.com/netsy-dev/netsy/internal/proto"
+	"github.com/netsy-dev/netsy/internal/storage"
 )
 
 // maxIntegrityAttempts caps bootstrap replay retries after an integrity

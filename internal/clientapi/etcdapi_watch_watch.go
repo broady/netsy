@@ -14,7 +14,7 @@ package clientapi
 import (
 	"time"
 
-	"github.com/nadrama-com/netsy/internal/watch"
+	"github.com/netsy-dev/netsy/internal/watch"
 	pb "go.etcd.io/etcd/api/v3/etcdserverpb"
 	"k8s.io/apimachinery/pkg/util/wait"
 )

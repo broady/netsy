@@ -15,7 +15,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/nadrama-com/netsy/internal/config"
+	"github.com/netsy-dev/netsy/internal/config"
 )
 
 func TestValidateLocalNodeCertificates(t *testing.T) {

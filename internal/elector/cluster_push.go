@@ -9,7 +9,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/nadrama-com/netsy/internal/nodestate"
+	"github.com/netsy-dev/netsy/internal/nodestate"
 )
 
 // pushTimeout is the RPC timeout for pushing cluster state to a single node.

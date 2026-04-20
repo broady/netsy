@@ -9,7 +9,7 @@ BINDIR=bin
 BINARY_NAME=netsy
 MAIN_PKG=./cmd/netsy
 
-BUILDVARS_PKG=github.com/nadrama-com/netsy/internal/buildvars
+BUILDVARS_PKG=github.com/netsy-dev/netsy/internal/buildvars
 
 CURRENT := $(dir $(abspath $(lastword $(MAKEFILE_LIST))))
 

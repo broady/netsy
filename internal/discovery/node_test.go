@@ -8,7 +8,7 @@ import (
 	"context"
 	"testing"
 
-	"github.com/nadrama-com/netsy/internal/storage"
+	"github.com/netsy-dev/netsy/internal/storage"
 )
 
 func TestNodePath(t *testing.T) {

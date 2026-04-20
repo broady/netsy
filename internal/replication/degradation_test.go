@@ -9,8 +9,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/nadrama-com/netsy/internal/nodestate"
-	"github.com/nadrama-com/netsy/internal/proto"
+	"github.com/netsy-dev/netsy/internal/nodestate"
+	"github.com/netsy-dev/netsy/internal/proto"
 )
 
 // TestDegradeSelfTransitionsHealth verifies a Replica self-degrades when asked

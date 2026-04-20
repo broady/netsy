@@ -180,7 +180,7 @@ const file_proto_node_proto_rawDesc = "" +
 	"\x10PushClusterState\x12\x13.netsy.ClusterState\x1a\x16.google.protobuf.Empty\x128\n" +
 	"\fGetNodeState\x12\x16.google.protobuf.Empty\x1a\x10.netsy.NodeState\x12N\n" +
 	"\x13GetMinWatchRevision\x12\x16.google.protobuf.Empty\x1a\x1f.netsy.MinWatchRevisionResponse\x12P\n" +
-	"\x14SendCompactionNotice\x12\x17.netsy.CompactionNotice\x1a\x1f.netsy.CompactionNoticeResponseB-Z+github.com/nadrama-com/netsy/internal/protob\x06proto3"
+	"\x14SendCompactionNotice\x12\x17.netsy.CompactionNotice\x1a\x1f.netsy.CompactionNoticeResponseB+Z)github.com/netsy-dev/netsy/internal/protob\x06proto3"
 
 var (
 	file_proto_node_proto_rawDescOnce sync.Once

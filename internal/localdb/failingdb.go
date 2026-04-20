@@ -8,7 +8,7 @@ import (
 	"database/sql"
 	"sync"
 
-	"github.com/nadrama-com/netsy/internal/proto"
+	"github.com/netsy-dev/netsy/internal/proto"
 )
 
 // FailingDB wraps a Database implementation and can be toggled to cause

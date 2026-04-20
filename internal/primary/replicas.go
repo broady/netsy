@@ -9,7 +9,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/nadrama-com/netsy/internal/nodestate"
+	"github.com/netsy-dev/netsy/internal/nodestate"
 )
 
 // Replica tracks a Replica's health and heartbeat state as seen by the

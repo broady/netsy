@@ -8,7 +8,7 @@ import (
 	"bytes"
 	"context"
 
-	"github.com/nadrama-com/netsy/internal/localdb"
+	"github.com/netsy-dev/netsy/internal/localdb"
 	pb "go.etcd.io/etcd/api/v3/etcdserverpb"
 	mvccpb "go.etcd.io/etcd/api/v3/mvccpb"
 	"go.etcd.io/etcd/api/v3/v3rpc/rpctypes"

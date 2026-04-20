@@ -8,7 +8,7 @@ import (
 	"context"
 	"time"
 
-	"github.com/nadrama-com/netsy/internal/nodestate"
+	"github.com/netsy-dev/netsy/internal/nodestate"
 )
 
 // committedRevisionLagGracePeriod is the delay before a Replica self-degrades

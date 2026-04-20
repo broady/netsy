@@ -11,9 +11,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/nadrama-com/netsy/internal/config"
-	"github.com/nadrama-com/netsy/internal/nodestate"
-	"github.com/nadrama-com/netsy/internal/storage"
+	"github.com/netsy-dev/netsy/internal/config"
+	"github.com/netsy-dev/netsy/internal/nodestate"
+	"github.com/netsy-dev/netsy/internal/storage"
 	pb "go.etcd.io/etcd/api/v3/etcdserverpb"
 )
 

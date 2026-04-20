@@ -5,7 +5,7 @@
 package nodestate
 
 import (
-	"github.com/nadrama-com/netsy/internal/proto"
+	"github.com/netsy-dev/netsy/internal/proto"
 )
 
 // HealthFromProto converts a proto HealthState enum to the internal

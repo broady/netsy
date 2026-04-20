@@ -13,7 +13,7 @@ import (
 	"io"
 
 	"github.com/klauspost/compress/zstd"
-	pb "github.com/nadrama-com/netsy/internal/proto"
+	pb "github.com/netsy-dev/netsy/internal/proto"
 	"google.golang.org/protobuf/encoding/protodelim"
 	"google.golang.org/protobuf/proto"
 )

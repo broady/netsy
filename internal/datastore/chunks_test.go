@@ -10,7 +10,7 @@ import (
 	"io"
 	"testing"
 
-	"github.com/nadrama-com/netsy/internal/storage"
+	"github.com/netsy-dev/netsy/internal/storage"
 )
 
 // mockStorage implements storage.ObjectStorage for testing
