@@ -90,6 +90,7 @@ func (s *Server) bootstrapFirstElector(ctx context.Context, regs []discovery.Nod
 			PeerAdvertiseAddress:   reg.PeerAdvertiseAddress,
 			LastHeartbeat:          time.Now(),
 			HealthState:            nodestate.HealthLoading,
+			PrimaryState:           nodestate.PrimaryReplica,
 		})
 	}
 
@@ -137,6 +138,7 @@ func (s *Server) bootstrapExisting(ctx context.Context, mf discovery.MembersFile
 			PeerAdvertiseAddress:   reg.PeerAdvertiseAddress,
 			LastHeartbeat:          time.Now(),
 			HealthState:            nodestate.HealthLoading,
+			PrimaryState:           nodestate.PrimaryReplica,
 		})
 	}
 

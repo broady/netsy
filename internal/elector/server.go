@@ -129,6 +129,7 @@ func (s *Server) RegisterNode(ctx context.Context, req *proto.RegisterNodeReques
 		PeerAdvertiseAddress:   req.GetPeerAdvertiseAddress(),
 		LastHeartbeat:          time.Now(),
 		HealthState:            nodestate.HealthLoading,
+		PrimaryState:           nodestate.PrimaryReplica,
 	})
 
 	cs := s.state.ClusterState()
