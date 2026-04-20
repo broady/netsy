@@ -27,6 +27,12 @@ import (
 // to Replica.
 type PrimaryChangeFunc func(isPrimary bool)
 
+// LocalElectorServer is the subset of proto.ElectorServer needed to
+// serve heartbeats locally when this node is the Elector.
+type LocalElectorServer interface {
+	SendHeartbeat(context.Context, *proto.NodeState) (*emptypb.Empty, error)
+}
+
 // Manager owns the outbound gRPC connections to the current Elector and
 // Primary. It updates connections when the cluster state changes.
 type Manager struct {
@@ -36,12 +42,14 @@ type Manager struct {
 	state     *nodestate.State
 
 	onPrimaryChange PrimaryChangeFunc
+	localElector    LocalElectorServer
 
-	mu          sync.Mutex
-	electorAddr string
-	electorConn *grpc.ClientConn
-	primaryAddr string
-	primaryConn *grpc.ClientConn
+	mu            sync.Mutex
+	electorAddr   string
+	electorConn   *grpc.ClientConn
+	electorClient proto.ElectorClient
+	primaryAddr   string
+	primaryConn   *grpc.ClientConn
 }
 
 // NewManager creates a new peer Manager.
@@ -57,6 +65,12 @@ func NewManager(
 		tlsConfig: tlsConfig,
 		state:     state,
 	}
+}
+
+// SetLocalElectorServer sets the local Elector server used when this
+// node is the Elector. Must be called before ConnectElector.
+func (m *Manager) SetLocalElectorServer(srv LocalElectorServer) {
+	m.localElector = srv
 }
 
 // SetPrimaryChangeFunc sets a callback invoked when this node's Primary
@@ -107,16 +121,16 @@ func (m *Manager) ApplyClusterState(ctx context.Context, cs nodestate.ClusterSta
 }
 
 // ConnectElector dials the given Elector address and sets the initial
-// Elector connection and heartbeat target. It is called once during
-// startup after the first election cycle completes.
+// Elector connection and heartbeat target. When the Elector is this
+// node, a local adapter is used instead of a gRPC connection.
 func (m *Manager) ConnectElector(electorNodeID, addr string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	// Self is elector — no outbound connection needed.
 	if electorNodeID == m.nodeID {
 		m.electorAddr = addr
-		m.logger.Info("elector is self, skipping outbound connection")
+		m.electorClient = &localElectorClient{srv: m.localElector}
+		m.logger.Info("elector is self, using local client")
 		return nil
 	}
 
@@ -130,20 +144,18 @@ func (m *Manager) ConnectElector(electorNodeID, addr string) error {
 
 	m.electorAddr = addr
 	m.electorConn = conn
+	m.electorClient = proto.NewElectorClient(conn)
 	m.logger.Info("elector connection established", "addr", addr)
 	return nil
 }
 
-// ElectorClient returns a gRPC Elector client for the current Elector
-// connection, or nil if none is established.
+// ElectorClient returns a client for the current Elector, or nil if
+// none is established. The client may be backed by a gRPC connection
+// or by a local adapter when this node is the Elector.
 func (m *Manager) ElectorClient() proto.ElectorClient {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-
-	if m.electorConn == nil {
-		return nil
-	}
-	return proto.NewElectorClient(m.electorConn)
+	return m.electorClient
 }
 
 // PrimaryClient returns a gRPC Primary client for the current Primary
@@ -274,10 +286,12 @@ func (m *Manager) updateElector(elector nodestate.NodeInfo) {
 		m.electorConn.Close()
 		m.electorConn = nil
 	}
+	m.electorClient = nil
 
 	if elector.NodeID == m.nodeID {
 		m.electorAddr = elector.PeerAdvertiseAddr
-		m.logger.Info("elector is self, skipping outbound connection")
+		m.electorClient = &localElectorClient{srv: m.localElector}
+		m.logger.Info("elector is self, using local client")
 		return
 	}
 
@@ -297,6 +311,7 @@ func (m *Manager) updateElector(elector nodestate.NodeInfo) {
 
 	m.electorAddr = elector.PeerAdvertiseAddr
 	m.electorConn = conn
+	m.electorClient = proto.NewElectorClient(conn)
 	m.logger.Info("elector connection updated", "addr", elector.PeerAdvertiseAddr)
 }
 

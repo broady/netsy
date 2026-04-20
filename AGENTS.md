@@ -14,6 +14,11 @@
 - **Protobuf**: `make proto` — generates Go files from proto files in `./proto`
 - **Test Package**: `go test -v -race ./internal/peerapi/` — run specific package tests
 
+### Important
+
+- **Always use `make build`** to build — never use `go build` directly. `make build` injects version info via linker flags that `go build` misses.
+- **Always use `make proto`** to regenerate protobuf files — never run `protoc` directly.
+
 ### Dev Logs
 
 Log files are written to `temp/logs/`. To view in real-time:

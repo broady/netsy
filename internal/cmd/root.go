@@ -379,6 +379,9 @@ func NewRootCmd() *cobra.Command {
 			electorPeerAddr = reg.PeerAdvertiseAddress
 		}
 
+		// Wire local Elector server for self-elector heartbeat delivery.
+		peerManager.SetLocalElectorServer(electionRunner.ElectorServer())
+
 		// Connect to the current Elector for peer RPCs
 		if err := peerManager.ConnectElector(electionStatus.LeaderID, electorPeerAddr); err != nil {
 			filteredLogger.Error("Failed to connect to elector", "error", err)
