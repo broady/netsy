@@ -55,7 +55,7 @@ func (db *database) InsertRecord(record *proto.Record, tx *Tx) (*proto.Record, e
 		record.LeaderId == "" ||
 		record.ReplicatedAt != nil ||
 		record.Crc != 0 ||
-		(record.Created == true && record.Deleted == true) {
+		(record.Created && record.Deleted) {
 		return nil, fmt.Errorf("invalid record data for insert")
 	}
 

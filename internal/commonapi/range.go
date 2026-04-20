@@ -91,7 +91,7 @@ func Range(db localdb.Database, ctx context.Context, r *pb.RangeRequest) (*pb.Ra
 
 	// query data with count
 	var revision int64
-	kvs := []*mvccpb.KeyValue{}
+	var kvs []*mvccpb.KeyValue
 	rows, totalCount, maxRevision, err := db.FindRecordsBy(queryWhere, queryArgs, r.Revision, r.Limit, order)
 	if err != nil {
 		return nil, err

@@ -98,7 +98,7 @@ func (f *FailingDB) InsertRecord(record *proto.Record, tx *Tx) (*proto.Record, e
 	result, err := f.inner.InsertRecord(record, tx)
 	if err == nil && f.shouldFailCommit() {
 		if tx.tx != nil {
-			tx.tx.Rollback()
+			_ = tx.tx.Rollback()
 			tx.tx = nil
 		}
 	}

@@ -16,12 +16,12 @@ func TestScopedStorage_PrefixesKeys(t *testing.T) {
 	scoped := newScopedStorage(inner, "myprefix")
 	ctx := context.Background()
 
-	scoped.Put(ctx, "chunks/file.netsy", []byte("data"))
+	_ = scoped.Put(ctx, "chunks/file.netsy", []byte("data"))
 	if _, _, err := inner.Get(ctx, "myprefix/chunks/file.netsy"); err != nil {
 		t.Errorf("Put: expected data at prefixed key, got error: %v", err)
 	}
 
-	scoped.PutIfMatch(ctx, "new/key", []byte("value"), "")
+	_ = scoped.PutIfMatch(ctx, "new/key", []byte("value"), "")
 	if _, _, err := inner.Get(ctx, "myprefix/new/key"); err != nil {
 		t.Errorf("PutIfMatch: expected data at prefixed key, got error: %v", err)
 	}
@@ -34,7 +34,7 @@ func TestScopedStorage_PrefixesKeys(t *testing.T) {
 		t.Errorf("Get: got %q, want %q", data, "data")
 	}
 
-	scoped.Delete(ctx, "chunks/file.netsy")
+	_ = scoped.Delete(ctx, "chunks/file.netsy")
 	if _, _, err := inner.Get(ctx, "myprefix/chunks/file.netsy"); err != ErrNotFound {
 		t.Errorf("Delete: expected key to be removed, got err=%v", err)
 	}
@@ -45,9 +45,9 @@ func TestScopedStorage_ListPrefixesAndStrips(t *testing.T) {
 	scoped := newScopedStorage(inner, "myprefix")
 	ctx := context.Background()
 
-	inner.Put(ctx, "myprefix/chunks/0001.netsy", []byte("a"))
-	inner.Put(ctx, "myprefix/chunks/0002.netsy", []byte("bb"))
-	inner.Put(ctx, "other/chunks/0003.netsy", []byte("ccc"))
+	_ = inner.Put(ctx, "myprefix/chunks/0001.netsy", []byte("a"))
+	_ = inner.Put(ctx, "myprefix/chunks/0002.netsy", []byte("bb"))
+	_ = inner.Put(ctx, "other/chunks/0003.netsy", []byte("ccc"))
 
 	results, err := scoped.List(ctx, "chunks/")
 	if err != nil {
@@ -70,7 +70,7 @@ func TestScopedStorage_TrailingSlash(t *testing.T) {
 
 	// Without trailing slash
 	scoped1 := newScopedStorage(inner, "prefix")
-	scoped1.Put(ctx, "key", []byte("v1"))
+	_ = scoped1.Put(ctx, "key", []byte("v1"))
 	if _, _, err := inner.Get(ctx, "prefix/key"); err != nil {
 		t.Errorf("without slash: expected data at prefix/key, got error: %v", err)
 	}

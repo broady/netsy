@@ -30,7 +30,7 @@ func TestHealthEndpoint(t *testing.T) {
 		{
 			name: "healthy returns 200",
 			setup: func(s *nodestate.State) {
-				s.SetHealth(nodestate.HealthHealthy)
+				_ = s.SetHealth(nodestate.HealthHealthy)
 			},
 			wantStatus: http.StatusOK,
 			wantBody:   "healthy",
@@ -38,8 +38,8 @@ func TestHealthEndpoint(t *testing.T) {
 		{
 			name: "degraded returns 503",
 			setup: func(s *nodestate.State) {
-				s.SetHealth(nodestate.HealthHealthy)
-				s.SetHealth(nodestate.HealthDegraded)
+				_ = s.SetHealth(nodestate.HealthHealthy)
+				_ = s.SetHealth(nodestate.HealthDegraded)
 			},
 			wantStatus: http.StatusServiceUnavailable,
 			wantBody:   "degraded",

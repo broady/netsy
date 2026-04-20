@@ -100,7 +100,7 @@ func TestListNodeRegistrations(t *testing.T) {
 	}
 
 	// Add a malformed entry that should be skipped.
-	store.Put(context.Background(), "nodes/bad.json", []byte("not json"))
+	_ = store.Put(context.Background(), "nodes/bad.json", []byte("not json"))
 
 	regs, err := ListNodeRegistrations(context.Background(), store)
 	if err != nil {

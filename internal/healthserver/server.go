@@ -71,5 +71,5 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 	if health != nodestate.HealthHealthy {
 		w.WriteHeader(http.StatusServiceUnavailable)
 	}
-	json.NewEncoder(w).Encode(healthResponse{Status: string(health)})
+	_ = json.NewEncoder(w).Encode(healthResponse{Status: string(health)})
 }

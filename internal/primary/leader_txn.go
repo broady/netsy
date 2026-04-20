@@ -121,7 +121,7 @@ func (ps *Server) LeaderTxn(ctx context.Context, r *pb.TxnRequest) (record *prot
 	if err != nil &&
 		errors.Is(err, localdb.ErrCompareRevisionFailed) &&
 		len(r.Failure) == 1 {
-		tx.Rollback()
+		_ = tx.Rollback()
 		// Range on compare failure
 		ps.logger.Debug("record insert error - executing failure op (range)", "error", err)
 		err = nil
@@ -133,7 +133,7 @@ func (ps *Server) LeaderTxn(ctx context.Context, r *pb.TxnRequest) (record *prot
 		}
 		// Don't upload on compare failure, just handle the range response
 	} else if err != nil {
-		tx.Rollback()
+		_ = tx.Rollback()
 		return nil, nil, fmt.Errorf("error for %s: %w", record.Key, err)
 	} else {
 		// Record inserted successfully, commit via selected path.
@@ -182,7 +182,7 @@ func (ps *Server) LeaderTxn(ctx context.Context, r *pb.TxnRequest) (record *prot
 func (ps *Server) executeObjectStorageTxn(ctx context.Context, tx *localdb.Tx, record *proto.Record) error {
 	err := ps.writeRecord(ctx, record)
 	if err != nil {
-		tx.Rollback()
+		_ = tx.Rollback()
 		ps.startObjectStorageRecovery(record, err)
 		return fmt.Errorf("object storage upload failed: %w", err)
 	}
@@ -232,7 +232,7 @@ func (ps *Server) executeQuorumTxn(ctx context.Context, tx *localdb.Tx, record *
 	// Wait for quorum receipts.
 	if !collector.wait(ps.quorumReceiptTimeout) {
 		// Quorum not met — rollback.
-		tx.Rollback()
+		_ = tx.Rollback()
 		if ps.metrics != nil {
 			ps.metrics.QuorumRollbacks.WithLabelValues("receipt_timeout").Inc()
 		}

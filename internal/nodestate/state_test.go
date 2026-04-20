@@ -46,10 +46,10 @@ func TestHealthTransitions(t *testing.T) {
 			// Walk state to the desired starting point.
 			switch tt.from {
 			case HealthHealthy:
-				s.SetHealth(HealthHealthy)
+				_ = s.SetHealth(HealthHealthy)
 			case HealthDegraded:
-				s.SetHealth(HealthHealthy)
-				s.SetHealth(HealthDegraded)
+				_ = s.SetHealth(HealthHealthy)
+				_ = s.SetHealth(HealthDegraded)
 			}
 			err := s.SetHealth(tt.to)
 			if (err != nil) != tt.wantErr {
@@ -78,7 +78,7 @@ func TestElectorTransitions(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			s := newTestState()
 			if tt.from == ElectorLeader {
-				s.SetElector(ElectorLeader)
+				_ = s.SetElector(ElectorLeader)
 			}
 			err := s.SetElector(tt.to)
 			if (err != nil) != tt.wantErr {
@@ -99,23 +99,23 @@ func TestPrimaryTransitions(t *testing.T) {
 		wantErr bool
 	}{
 		{"replica->starting", func(s *State) {}, PrimaryStarting, false},
-		{"starting->active", func(s *State) { s.SetPrimary(PrimaryStarting) }, PrimaryActive, false},
+		{"starting->active", func(s *State) { _ = s.SetPrimary(PrimaryStarting) }, PrimaryActive, false},
 		{"active->draining", func(s *State) {
-			s.SetPrimary(PrimaryStarting)
-			s.SetPrimary(PrimaryActive)
+			_ = s.SetPrimary(PrimaryStarting)
+			_ = s.SetPrimary(PrimaryActive)
 		}, PrimaryDraining, false},
 		{"draining->replica", func(s *State) {
-			s.SetPrimary(PrimaryStarting)
-			s.SetPrimary(PrimaryActive)
-			s.SetPrimary(PrimaryDraining)
+			_ = s.SetPrimary(PrimaryStarting)
+			_ = s.SetPrimary(PrimaryActive)
+			_ = s.SetPrimary(PrimaryDraining)
 		}, PrimaryReplica, false},
 		{"replica->active", func(s *State) {}, PrimaryActive, true},
 		{"replica->draining", func(s *State) {}, PrimaryDraining, true},
-		{"starting->replica", func(s *State) { s.SetPrimary(PrimaryStarting) }, PrimaryReplica, false},
-		{"starting->draining", func(s *State) { s.SetPrimary(PrimaryStarting) }, PrimaryDraining, false},
+		{"starting->replica", func(s *State) { _ = s.SetPrimary(PrimaryStarting) }, PrimaryReplica, false},
+		{"starting->draining", func(s *State) { _ = s.SetPrimary(PrimaryStarting) }, PrimaryDraining, false},
 		{"active->replica", func(s *State) {
-			s.SetPrimary(PrimaryStarting)
-			s.SetPrimary(PrimaryActive)
+			_ = s.SetPrimary(PrimaryStarting)
+			_ = s.SetPrimary(PrimaryActive)
 		}, PrimaryReplica, true},
 	}
 	for _, tt := range tests {

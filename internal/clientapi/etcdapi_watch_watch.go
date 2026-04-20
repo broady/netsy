@@ -67,13 +67,15 @@ func (cs *ClientAPIServer) Watch(ws pb.Watch_WatchServer) error {
 
 	// we use PollUntilContextCancel to invoke progress reporting on an interval
 	// it will continue until the context is cancelled or hits a deadline.
-	go wait.PollUntilContextCancel(
-		w.Client().Context(),
-		// TODO: add jitter so we don't send updates to all watchers at the same time
-		time.Second*5,
-		true,
-		w.ReportProgressOnInterval(cs.state.Committed, cs.logger),
-	)
+	go func() {
+		_ = wait.PollUntilContextCancel(
+			w.Client().Context(),
+			// TODO: add jitter so we don't send updates to all watchers at the same time
+			time.Second*5,
+			true,
+			w.ReportProgressOnInterval(cs.state.Committed, cs.logger),
+		)
+	}()
 
 	// block until gRPC stream is closed
 	var err error
@@ -98,7 +100,7 @@ func (cs *ClientAPIServer) Watch(ws pb.Watch_WatchServer) error {
 		}
 		if pr := msg.GetProgressRequest(); pr != nil {
 			// handle watch progress request
-			w.ReportProgressOnInterval(cs.state.Committed, cs.logger)(w.Client().Context())
+			_, _ = w.ReportProgressOnInterval(cs.state.Committed, cs.logger)(w.Client().Context())
 		}
 	}
 

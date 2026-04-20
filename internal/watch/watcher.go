@@ -208,12 +208,12 @@ func (w *Watcher) CreateWatch(r *pb.WatchCreateRequest, latestRevision int64, co
 		}
 		if cancelReason != "" {
 			logger.Debug("create watch failed", "reason", cancelReason, "start_revision", r.StartRevision)
-			w.client.Send(&pb.WatchResponse{
+			_ = w.client.Send(&pb.WatchResponse{
 				Header:  respHeader,
 				Created: true,
 				WatchId: watchID,
 			})
-			w.client.Send(&pb.WatchResponse{
+			_ = w.client.Send(&pb.WatchResponse{
 				Header:          respHeader,
 				Canceled:        true,
 				CancelReason:    cancelReason,
