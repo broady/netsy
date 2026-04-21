@@ -27,22 +27,21 @@ type RevisionSource interface {
 // drain-flush-resign sequence asynchronously.
 type PrimarySelfDegradeFunc func()
 
-// Sender sends heartbeats to the Elector and Primary on their respective
-// cadences. It uses the following routing logic:
+// Sender sends heartbeats to the Elector and Primary on a single
+// cadence. It uses the following routing logic:
 //
-//   - To the Elector: always send on elector.heartbeat_interval.
-//   - To the Primary: send on replication.heartbeat_interval only when
+//   - To the Elector: always send on heartbeat_interval.
+//   - To the Primary: send on heartbeat_interval only when
 //     no Receipt has been sent within that window.
 //   - When Elector == Primary: a single heartbeat satisfies both.
 type Sender struct {
-	logger              *slog.Logger
-	nodeID              string
-	state               *nodestate.State
-	peers               *peerclient.Manager
-	db                  RevisionSource
-	startTime           int64
-	electorInterval     time.Duration
-	replicationInterval time.Duration
+	logger    *slog.Logger
+	nodeID    string
+	state     *nodestate.State
+	peers     *peerclient.Manager
+	db        RevisionSource
+	startTime int64
+	interval  time.Duration
 
 	onPrimarySelfDegrade PrimarySelfDegradeFunc
 
@@ -70,20 +69,18 @@ func NewSender(
 	peers *peerclient.Manager,
 	db RevisionSource,
 	startTime int64,
-	electorInterval time.Duration,
-	replicationInterval time.Duration,
+	interval time.Duration,
 	retryMetrics *metrics.RetryMetrics,
 ) *Sender {
 	return &Sender{
-		logger:              logger,
-		nodeID:              nodeID,
-		state:               state,
-		peers:               peers,
-		db:                  db,
-		startTime:           startTime,
-		electorInterval:     electorInterval,
-		replicationInterval: replicationInterval,
-		retryMetrics:        retryMetrics,
+		logger:       logger,
+		nodeID:       nodeID,
+		state:        state,
+		peers:        peers,
+		db:           db,
+		startTime:    startTime,
+		interval:     interval,
+		retryMetrics: retryMetrics,
 	}
 }
 
@@ -101,34 +98,17 @@ func (s *Sender) MarkReceiptSent() {
 	s.lastReceiptSent.Store(time.Now().UnixNano())
 }
 
-// Run starts the heartbeat sender loops. It blocks until ctx is
+// Run starts the heartbeat sender loop. It blocks until ctx is
 // cancelled.
 func (s *Sender) Run(ctx context.Context) {
-	var wg sync.WaitGroup
-
-	if s.electorInterval > 0 {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			s.runElectorLoop(ctx)
-		}()
+	if s.interval > 0 {
+		s.runLoop(ctx)
 	}
-
-	if s.replicationInterval > 0 {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			s.runPrimaryLoop(ctx)
-		}()
-	}
-
-	wg.Wait()
 }
 
-// runElectorLoop sends heartbeats to the Elector on the configured cadence
-// until the context is cancelled.
-func (s *Sender) runElectorLoop(ctx context.Context) {
-	ticker := time.NewTicker(s.electorInterval)
+// runLoop sends heartbeats on a single cadence until the context is cancelled.
+func (s *Sender) runLoop(ctx context.Context) {
+	ticker := time.NewTicker(s.interval)
 	defer ticker.Stop()
 
 	for {
@@ -137,21 +117,6 @@ func (s *Sender) runElectorLoop(ctx context.Context) {
 			return
 		case <-ticker.C:
 			s.sendToElector(ctx)
-		}
-	}
-}
-
-// runPrimaryLoop sends standalone heartbeats to the Primary only when a recent
-// Receipt has not already satisfied the replication heartbeat cadence.
-func (s *Sender) runPrimaryLoop(ctx context.Context) {
-	ticker := time.NewTicker(s.replicationInterval)
-	defer ticker.Stop()
-
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case <-ticker.C:
 			s.sendToPrimaryIfNeeded(ctx)
 		}
 	}
@@ -238,7 +203,7 @@ func (s *Sender) sendToPrimaryIfNeeded(ctx context.Context) {
 	lastReceipt := s.lastReceiptSent.Load()
 	if lastReceipt > 0 {
 		elapsed := time.Duration(time.Now().UnixNano() - lastReceipt)
-		if elapsed < s.replicationInterval {
+		if elapsed < s.interval {
 			return
 		}
 	}

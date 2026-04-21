@@ -24,8 +24,8 @@ func newTestServer(heartbeatInterval time.Duration, degradationCount int) *Serve
 		"test-cluster",
 		storage.NewMemoryStore(),
 		state,
-		0, // deregTimeout
 		heartbeatInterval,
+		0, // deregTimeout
 		degradationCount,
 		"test-node", 0, nil, 0, 0, mgr, nil, nil,
 	)
@@ -127,8 +127,8 @@ func TestCheckNodeHealthDeregistersAfterTimeout(t *testing.T) {
 		"test-cluster",
 		storage.NewMemoryStore(),
 		state,
-		100*time.Millisecond, // deregTimeout
 		50*time.Millisecond,
+		100*time.Millisecond, // deregTimeout
 		2,
 		"test-node", 0, nil, 0, 0, mgr, nil, nil,
 	)
@@ -159,8 +159,8 @@ func TestCheckNodeHealthKeepsDegradedBeforeTimeout(t *testing.T) {
 		"test-cluster",
 		storage.NewMemoryStore(),
 		state,
-		time.Hour, // deregTimeout — far in the future
 		50*time.Millisecond,
+		time.Hour, // deregTimeout — far in the future
 		2,
 		"test-node", 0, nil, 0, 0, mgr, nil, nil,
 	)
@@ -227,8 +227,8 @@ func TestCheckNodeHealthClearsPrimaryOnDeregistration(t *testing.T) {
 		"test-cluster",
 		storage.NewMemoryStore(),
 		state,
-		100*time.Millisecond, // deregTimeout
 		50*time.Millisecond,
+		100*time.Millisecond, // deregTimeout
 		2,
 		"test-node", 0, nil, 0, 0, mgr, nil, nil,
 	)

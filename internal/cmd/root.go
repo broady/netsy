@@ -302,7 +302,7 @@ func NewRootCmd() *cobra.Command {
 			peerManager,
 			watchManager,
 			primaryMetrics,
-			c.Replication.HeartbeatInterval.Duration,
+			c.HeartbeatInterval.Duration,
 			c.Replication.DegradationCount,
 			compactionMetrics,
 			retryMetrics,
@@ -397,8 +397,7 @@ func NewRootCmd() *cobra.Command {
 			peerManager,
 			db,
 			startTime,
-			c.Elector.HeartbeatInterval.Duration,
-			c.Replication.HeartbeatInterval.Duration,
+			c.HeartbeatInterval.Duration,
 			retryMetrics,
 		)
 

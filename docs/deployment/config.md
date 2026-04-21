@@ -27,7 +27,7 @@ Exits with code `0` and a success message if valid, or code `1` with error detai
 - Both `cluster_id` and `node_id` must be lowercase alphanumeric characters and hyphens only, with no leading, trailing, or consecutive hyphens, and a maximum of 32 characters.
 - `elector.degradation_count` must be >= 1
 - `replication.degradation_count` must be >= 1
-- `elector.primary_prior_timeout` must be >= `elector.degradation_count` × `elector.heartbeat_interval` — the Elector must not give up waiting for the previous Primary before it would even be marked Degraded
+- `elector.primary_prior_timeout` must be >= `elector.degradation_count` × `heartbeat_interval` — the Elector must not give up waiting for the previous Primary before it would even be marked Degraded
 - `replication.chunk_buffer.threshold_age_minutes` must be > 0 when `replication.quorum` is not `0` — without a time-based flush, a low-write cluster could hold unflushed data in memory indefinitely
 
 ## Per-Node Settings (environment variables)
@@ -104,9 +104,11 @@ netsy --config /etc/netsy/config.jsonc
     // "kms_key_id": ""     // only needed when using customer-managed encryption
   },
 
+  // How often each Node sends heartbeats to the Elector and Primary
+  "heartbeat_interval": "1s",
+
   // Elector leader election and node lifecycle
   "elector": {
-    "heartbeat_interval": "1s",       // how often each Node sends a heartbeat to the Elector
     "degradation_count": 2,           // number of missed heartbeats before Node is marked Degraded
     "deregistration_timeout": "3m",   // auto-deregister Degraded nodes after this duration ("0" to disable)
     "primary_prior_timeout": "5s"     // how long to wait for the previous Primary during election before proceeding
@@ -115,7 +117,6 @@ netsy --config /etc/netsy/config.jsonc
   // Replication stream between Primary and Replicas
   "replication": {
     "quorum": -1,                     // -1 = majority, 0 = disabled (sync to object storage), positive int = static
-    "heartbeat_interval": "500ms",    // standalone heartbeat to Primary when no Receipt sent within this window
     "degradation_count": 2,           // number of missed Heartbeats/Receipts before Replica is excluded from quorum
     // Buffer for async object storage writes
     "chunk_buffer": {
@@ -163,12 +164,11 @@ GCS example:
 | `storage.class` | `STANDARD` | Provider-specific storage class |
 | `storage.encryption` | `provider-managed` | Encryption mode: `provider-managed` or `customer-managed` |
 | `storage.kms_key_id` | — | KMS key identifier/resource when using `customer-managed` encryption |
-| `elector.heartbeat_interval` | — | How often each Node sends a heartbeat to the Elector |
+| `heartbeat_interval` | — | How often each Node sends heartbeats to the Elector and Primary |
 | `elector.degradation_count` | `2` | Number of consecutive missed heartbeats before Node is marked Degraded |
 | `elector.deregistration_timeout` | `3m` | Auto-deregister Degraded nodes (`0` = disabled) |
 | `elector.primary_prior_timeout` | — | Timeout for contacting previous Primary during election |
 | `replication.quorum` | `-1` | Quorum config: `-1` (majority), `0` (disabled), positive int (static) |
-| `replication.heartbeat_interval` | — | Standalone heartbeat to Primary when no Receipt sent within window |
 | `replication.degradation_count` | `2` | Number of consecutive missed Heartbeats/Receipts before Replica is excluded from quorum; the Primary may also mark a Replica `Degraded` immediately on quorum receipt timeout |
 | `replication.chunk_buffer.threshold_size_mb` | — | Chunk Buffer size-based flush threshold |
 | `replication.chunk_buffer.threshold_age_minutes` | — | Chunk Buffer time-based flush threshold |
@@ -177,7 +177,7 @@ GCS example:
 | `snapshot.threshold_age_minutes` | `0` | Snapshot after N minutes (`0` = disabled) |
 | `compaction_interval` | — | Compaction scheduling interval |
 
-For replication, the heartbeat-based degradation window is `replication.heartbeat_interval × replication.degradation_count`. If that window is longer than the quorum receipt timeout, a Replica may be marked `Degraded` immediately on quorum timeout and then recover quickly on a subsequent Heartbeat or Receipt.
+For replication, the heartbeat-based degradation window is `heartbeat_interval × replication.degradation_count`. If that window is longer than the quorum receipt timeout, a Replica may be marked `Degraded` immediately on quorum timeout and then recover quickly on a subsequent Heartbeat or Receipt.
 
 ### Object Storage Connectivity (env vars)
 

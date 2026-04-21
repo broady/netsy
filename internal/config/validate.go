@@ -99,25 +99,20 @@ func (c *Config) Validate() error {
 		return fmt.Errorf("replication.degradation_count must be >= 1")
 	}
 
-	// elector.heartbeat_interval > 0
-	if c.Elector.HeartbeatInterval.Duration <= 0 {
-		return fmt.Errorf("elector.heartbeat_interval must be > 0")
+	// heartbeat_interval > 0
+	if c.HeartbeatInterval.Duration <= 0 {
+		return fmt.Errorf("heartbeat_interval must be > 0")
 	}
 
 	// elector.primary_prior_timeout >= degradation_count * heartbeat_interval
-	minPriorTimeout := time.Duration(c.Elector.DegradationCount) * c.Elector.HeartbeatInterval.Duration
+	minPriorTimeout := time.Duration(c.Elector.DegradationCount) * c.HeartbeatInterval.Duration
 	if c.Elector.PrimaryPriorTimeout.Duration < minPriorTimeout {
-		return fmt.Errorf("elector.primary_prior_timeout (%s) must be >= elector.degradation_count (%d) * elector.heartbeat_interval (%s) = %s",
+		return fmt.Errorf("elector.primary_prior_timeout (%s) must be >= elector.degradation_count (%d) * heartbeat_interval (%s) = %s",
 			c.Elector.PrimaryPriorTimeout.Duration,
 			c.Elector.DegradationCount,
-			c.Elector.HeartbeatInterval.Duration,
+			c.HeartbeatInterval.Duration,
 			minPriorTimeout,
 		)
-	}
-
-	// replication.heartbeat_interval > 0
-	if c.Replication.HeartbeatInterval.Duration <= 0 {
-		return fmt.Errorf("replication.heartbeat_interval must be > 0")
 	}
 
 	// replication.chunk_buffer.threshold_age_minutes > 0 when quorum != 0

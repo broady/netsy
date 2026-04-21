@@ -17,9 +17,11 @@
     "encryption": "provider-managed"
   },
 
+  // How often each Node sends heartbeats to the Elector and Primary
+  "heartbeat_interval": "1s",
+
   // Elector leader election and node lifecycle
   "elector": {
-    "heartbeat_interval": "1s",
     "degradation_count": 2,
     "deregistration_timeout": "3m",
     "primary_prior_timeout": "5s"
@@ -28,7 +30,6 @@
   // Replication stream between Primary and Replicas
   "replication": {
     "quorum": -1,
-    "heartbeat_interval": "500ms",
     "degradation_count": 2,
     "chunk_buffer": {
       "threshold_size_mb": 4,

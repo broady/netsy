@@ -25,8 +25,8 @@ func TestSendHeartbeatUpdatesNodeState(t *testing.T) {
 		"test-cluster",
 		storage.NewMemoryStore(),
 		state,
-		0,
 		time.Second,
+		0,
 		2,
 		"", 0, nil, 0, 0, nil, nil, nil,
 	)
@@ -72,8 +72,8 @@ func TestSendHeartbeatRejectsNonLeader(t *testing.T) {
 		"test-cluster",
 		storage.NewMemoryStore(),
 		state,
-		0,
 		time.Second,
+		0,
 		2,
 		"", 0, nil, 0, 0, nil, nil, nil,
 	)
@@ -95,8 +95,8 @@ func TestSendHeartbeatRejectsUnknownNode(t *testing.T) {
 		"test-cluster",
 		storage.NewMemoryStore(),
 		state,
-		0,
 		time.Second,
+		0,
 		2,
 		"", 0, nil, 0, 0, nil, nil, nil,
 	)
@@ -122,8 +122,8 @@ func TestStaleRegistrationReuseMemberID(t *testing.T) {
 		"test-cluster",
 		store,
 		state,
-		0,
 		time.Second,
+		0,
 		2,
 		"", 0, nil, 0, 0, nil, nil, nil,
 	)

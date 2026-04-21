@@ -17,6 +17,7 @@ import (
 type ClusterConfig struct {
 	ClusterID          string            `json:"cluster_id"`
 	Storage            StorageConfig     `json:"storage"`
+	HeartbeatInterval  Duration          `json:"heartbeat_interval"`
 	Elector            ElectorConfig     `json:"elector"`
 	Replication        ReplicationConfig `json:"replication"`
 	Snapshot           SnapshotConfig    `json:"snapshot"`
@@ -33,17 +34,15 @@ type StorageConfig struct {
 }
 
 type ElectorConfig struct {
-	HeartbeatInterval     Duration `json:"heartbeat_interval"`
 	DegradationCount      int      `json:"degradation_count"`      // default 2
 	DeregistrationTimeout Duration `json:"deregistration_timeout"` // default "3m"
 	PrimaryPriorTimeout   Duration `json:"primary_prior_timeout"`
 }
 
 type ReplicationConfig struct {
-	Quorum            *int              `json:"quorum"` // default -1; 0 = disabled, -1 = majority, positive = static
-	HeartbeatInterval Duration          `json:"heartbeat_interval"`
-	DegradationCount  int               `json:"degradation_count"` // default 2
-	ChunkBuffer       ChunkBufferConfig `json:"chunk_buffer"`
+	Quorum           *int              `json:"quorum"`            // default -1; 0 = disabled, -1 = majority, positive = static
+	DegradationCount int               `json:"degradation_count"` // default 2
+	ChunkBuffer      ChunkBufferConfig `json:"chunk_buffer"`
 }
 
 type ChunkBufferConfig struct {

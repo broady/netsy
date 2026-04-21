@@ -35,7 +35,6 @@ func TestBuildNodeState(t *testing.T) {
 		db,
 		12345,
 		time.Second,
-		time.Second,
 		nil,
 	)
 
@@ -64,7 +63,6 @@ func newTestSender(nodeID string, state *nodestate.State) *Sender {
 		mgr,
 		&stubDB{revision: 5},
 		time.Now().Unix(),
-		time.Second,
 		50*time.Millisecond,
 		nil,
 	)
