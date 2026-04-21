@@ -86,6 +86,17 @@ each instance has a unique `node_id`, unique advertise addresses, and matching
 TLS certs, they will discover each other through the shared dev S3 bucket.
 No peer configuration is needed.
 
+## Debug Logging
+
+Enable debug-level logging with the `NETSY_DEBUG` environment variable:
+
+```
+NETSY_DEBUG=true make start
+```
+
+This works with both single and multi-instance modes. Debug logging is verbose
+and includes every heartbeat tick, stream message, and degradation check.
+
 ## Viewing Logs
 
 Logs are written to `temp/logs/`:

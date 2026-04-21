@@ -56,6 +56,9 @@ type Sender struct {
 	lastPrimaryMu     sync.Mutex
 	lastPrimaryNodeID string
 
+	electorHeartbeatSent atomic.Bool
+	primaryHeartbeatSent atomic.Bool
+
 	retryMetrics *metrics.RetryMetrics
 }
 
@@ -190,6 +193,10 @@ func (s *Sender) sendToElector(ctx context.Context) {
 		}
 	}
 
+	if !s.electorHeartbeatSent.Swap(true) {
+		s.logger.Info("first elector heartbeat sent", "target", cs.Elector.NodeID)
+	}
+
 	// When Elector == Primary, this heartbeat satisfies both since the
 	// server-side processing uses the same code path. Mark it so the
 	// primary loop does not send a redundant heartbeat.
@@ -258,7 +265,12 @@ func (s *Sender) sendToPrimaryIfNeeded(ctx context.Context) {
 				"error", err,
 			)
 			s.degradeSelf("primary heartbeat failed after retry", err)
+			return
 		}
+	}
+
+	if !s.primaryHeartbeatSent.Swap(true) {
+		s.logger.Info("first primary heartbeat sent", "target", cs.Primary.NodeID)
 	}
 }
 

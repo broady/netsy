@@ -27,7 +27,7 @@
 
   // Replication stream between Primary and Replicas
   "replication": {
-    "quorum": 0,
+    "quorum": -1,
     "heartbeat_interval": "500ms",
     "degradation_count": 2,
     "chunk_buffer": {

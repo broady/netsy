@@ -149,10 +149,11 @@ check_log() {
         return
     fi
 
-    local panics fatals errors
+    local panics fatals errors warnings
     panics=$(grep -c -i "panic" "$logfile" 2>/dev/null || true)
     fatals=$(grep -c -i "fatal" "$logfile" 2>/dev/null || true)
     errors=$(grep -c "level=ERROR" "$logfile" 2>/dev/null || true)
+    warnings=$(grep -c "level=WARN" "$logfile" 2>/dev/null || true)
 
     if [ "$panics" -gt 0 ]; then
         fail "$name — $panics panic(s) found"
@@ -163,8 +164,11 @@ check_log() {
     elif [ "$errors" -gt 0 ]; then
         warn "$name — $errors error-level log(s) found"
         grep "level=ERROR" "$logfile" | tail -3 | sed 's/^/        /'
+    elif [ "$warnings" -gt 0 ]; then
+        warn "$name — $warnings warn-level log(s) found"
+        grep "level=WARN" "$logfile" | tail -3 | sed 's/^/        /'
     else
-        pass "$name — no panics, fatals, or errors"
+        pass "$name — no panics, fatals, errors, or warnings"
     fi
 }
 
@@ -216,7 +220,7 @@ for i in $(seq 1 "$INSTANCE_COUNT"); do
     logfile="${LOG_DIR}/netsy-${i}.log"
     [ -f "$logfile" ] || continue
 
-    degraded_count=$(grep -c "marking node degraded" "$logfile" 2>/dev/null || true)
+    degraded_count=$(grep -c "degraded" "$logfile" 2>/dev/null || true)
     hb_failures=$(grep "heartbeat" "$logfile" 2>/dev/null | grep -c -i "fail\|error" || true)
     self_degraded=$(grep -c "node self-degraded" "$logfile" 2>/dev/null || true)
 
