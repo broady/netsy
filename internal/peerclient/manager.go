@@ -79,8 +79,10 @@ func (m *Manager) SetPrimaryChangeFunc(fn PrimaryChangeFunc) {
 	m.onPrimaryChange = fn
 }
 
-// ApplyClusterState updates local node state and outbound peer
-// connections to reflect the given cluster state.
+// ApplyClusterState applies the given cluster state to the current
+// node only. It executes the role-change callback, updates state
+// transitions and reconnects gRPC clients to the current Elector
+// and Primary.
 func (m *Manager) ApplyClusterState(ctx context.Context, cs nodestate.ClusterState) {
 	old := m.state.ClusterState()
 	m.state.SetClusterState(cs)

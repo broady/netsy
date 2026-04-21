@@ -15,17 +15,27 @@ import (
 // pushTimeout is the RPC timeout for pushing cluster state to a single node.
 const pushTimeout = 5 * time.Second
 
-// pushClusterState builds the current authoritative cluster state and
-// pushes it to all registered nodes. The Primary is pushed first,
-// then all other nodes in parallel. Failures are logged but do not
-// block subsequent pushes.
-func (s *Server) pushClusterState(ctx context.Context) {
+// pushClusterState builds the current authoritative cluster state with the
+// given Primary and distributes it. The local node's state is updated first,
+// then the Primary node, then all remaining nodes in parallel. Failures are
+// logged but do not block subsequent pushes.
+//
+// The caller provides the desired Primary so that the shared state is only
+// updated inside ApplyClusterState, which ensures that the role-change
+// callback fires correctly (it compares old vs new Primary).
+func (s *Server) pushClusterState(ctx context.Context, primary nodestate.NodeInfo) {
 	cs := s.state.ClusterState()
+	cs.Primary = primary
 	cs.NodeCount = s.nodeMap.Count()
-	protoCS := nodestate.ClusterStateToProto(cs)
 
+	// Apply cluster state to this node first. This must happen even
+	// when no remote nodes are registered (e.g. single-node clusters
+	// or after deregistration clears the map).
+	s.peers.ApplyClusterState(ctx, cs)
+
+	// Return early if there's no remote nodes to push to.
 	entries := s.nodeMap.All()
-	if len(entries) == 0 {
+	if len(entries) <= 1 {
 		return
 	}
 
@@ -35,15 +45,6 @@ func (s *Server) pushClusterState(ctx context.Context) {
 		"node_count", len(entries),
 	)
 
-	// Apply cluster state to this node (state transitions, connection
-	// updates) before pushing to remote nodes.
-	s.peers.ApplyClusterState(ctx, cs)
-
-	// No remote nodes to push to.
-	if len(entries) <= 1 {
-		return
-	}
-
 	// Remove self from the list.
 	remote := make([]NodeEntry, 0, len(entries)-1)
 	for _, e := range entries {
@@ -52,6 +53,7 @@ func (s *Server) pushClusterState(ctx context.Context) {
 		}
 	}
 
+	protoCS := nodestate.ClusterStateToProto(cs)
 	push := func(nodeID, addr string) {
 		pushCtx, cancel := context.WithTimeout(ctx, pushTimeout)
 		defer cancel()

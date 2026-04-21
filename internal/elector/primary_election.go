@@ -74,8 +74,7 @@ func (s *Server) runPrimaryElectionLoop(ctx context.Context) {
 		}
 
 		s.previousPrimary = nodestate.NodeInfo{}
-		s.state.SetClusterPrimary(elected)
-		s.pushClusterState(ctx)
+		s.pushClusterState(ctx, elected)
 
 		if s.metrics != nil {
 			s.metrics.PrimaryElections.WithLabelValues("success").Inc()

@@ -152,6 +152,5 @@ func (s *Server) clearPrimary(ctx context.Context, reason string) {
 		"reason", reason,
 	)
 	s.previousPrimary = cs.Primary
-	s.state.SetClusterPrimary(nodestate.NodeInfo{})
-	s.pushClusterState(ctx)
+	s.pushClusterState(ctx, nodestate.NodeInfo{})
 }
