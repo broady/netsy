@@ -13,12 +13,29 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strings"
 	"syscall"
 
 	"github.com/johannesboyne/gofakes3"
 	"github.com/johannesboyne/gofakes3/backend/s3afero"
 	"github.com/spf13/afero"
 )
+
+// s3Logger wraps a gofakes3.Logger to rewrite misleading log messages.
+// gofakes3 logs "CREATE OBJECT" for PutObject; this rewrites it to "PUT OBJECT"
+// to match S3 API terminology.
+type s3Logger struct {
+	inner gofakes3.Logger
+}
+
+func (l *s3Logger) Print(level gofakes3.LogLevel, v ...interface{}) {
+	for i, val := range v {
+		if s, ok := val.(string); ok {
+			v[i] = strings.ReplaceAll(s, "CREATE OBJECT", "PUT OBJECT")
+		}
+	}
+	l.inner.Print(level, v...)
+}
 
 func main() {
 	var (
@@ -45,7 +62,7 @@ func main() {
 
 	faker := gofakes3.New(backend,
 		gofakes3.WithAutoBucket(true),
-		gofakes3.WithGlobalLog(),
+		gofakes3.WithLogger(&s3Logger{inner: gofakes3.GlobalLog()}),
 	)
 
 	srv := &http.Server{

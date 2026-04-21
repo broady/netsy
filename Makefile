@@ -113,8 +113,8 @@ proto: ## Generate Go files from protobuf definitions
 	       --go-grpc_out=$(CURRENT)internal \
 	       --go-grpc_opt=paths=source_relative $(CURRENT)proto/*.proto
 
-clean: stop ## Force-stop dev environment and remove build artifacts
-	rm -rf $(BINDIR)
+clean: stop ## Force-stop dev environment and remove build artifacts and temp files
+	rm -rf $(BINDIR) temp/
 
 image: ## Build container image
 	docker build -f images/netsy/Containerfile -t ghcr.io/netsy-dev/netsy:latest .
@@ -130,11 +130,10 @@ start: ## Start development environment (NETSY_COUNT=1 by default)
 restart: ## Restart all Netsy instances (use after 'make build')
 	@overmind restart netsy
 
-stop: ## Force-stop development environment and remove temp files
+stop: ## Force-stop development environment
 	@overmind kill 2>/dev/null || overmind quit 2>/dev/null || true
-	@rm -rf temp/
 	@rm -f .overmind.sock
-	@echo "Development environment cleaned."
+	@echo "Development environment stopped."
 
 status: ## Show status of dev processes and ports
 	@./scripts/dev/check-ports.sh $(NETSY_COUNT)
