@@ -120,15 +120,25 @@ image: ## Build container image
 	docker build -f images/netsy/Containerfile -t ghcr.io/netsy-dev/netsy:latest .
 
 ##@ Dev Environment
+define archive-logs
+	@if ls temp/logs/*.log 1>/dev/null 2>&1; then \
+		archive="temp/logs/previous/$$(date +%Y%m%d-%H%M%S)"; \
+		mkdir -p "$$archive"; \
+		mv temp/logs/*.log "$$archive/"; \
+		echo "Previous logs archived to $$archive"; \
+	fi
+endef
 
 start: ## Start development environment (NETSY_COUNT=1 by default)
 	@./scripts/dev/check-ports.sh $(NETSY_COUNT)
 	@test -f temp/certs/ca.crt || ./scripts/dev/certs.sh $(NETSY_COUNT)
 	@if [ "$(NETSY_COUNT)" -gt 1 ]; then $(MAKE) build; fi
+	$(archive-logs)
 	OVERMIND_FORMATION=s3=1,netsy=$(NETSY_COUNT) overmind start -D
 	@echo "Development environment started. Use 'make tail' to view logs."
 
 restart: ## Restart all Netsy instances (use after 'make build')
+	$(archive-logs)
 	@overmind restart netsy
 
 stop: ## Force-stop development environment

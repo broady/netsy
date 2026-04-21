@@ -73,6 +73,19 @@ if [ "$PROCS_OK" = false ]; then
     exit 1
 fi
 
+# Report restart count per instance
+for i in $(seq 1 "$INSTANCE_COUNT"); do
+    logfile="${LOG_DIR}/netsy-${i}.log"
+    [ -f "$logfile" ] || continue
+    starts=$(grep -c "starting health" "$logfile" 2>/dev/null || true)
+    restarts=$(( starts - 1 ))
+    if [ "$restarts" -le 0 ]; then
+        pass "netsy-${i} — no restarts"
+    else
+        warn "netsy-${i} — $restarts restart(s)"
+    fi
+done
+
 # ============================================================================
 # 2. Health Endpoint Checks
 # ============================================================================
@@ -165,6 +178,7 @@ done
 # ============================================================================
 section "Election Status"
 
+ELECTOR_FOUND=false
 for i in $(seq 1 "$INSTANCE_COUNT"); do
     logfile="${LOG_DIR}/netsy-${i}.log"
     [ -f "$logfile" ] || continue
@@ -172,28 +186,26 @@ for i in $(seq 1 "$INSTANCE_COUNT"); do
     # Elector leadership
     if grep -q "acquired elector leadership" "$logfile" 2>/dev/null; then
         pass "netsy-${i} — acquired elector leadership"
-    else
-        # Not all nodes become elector, only check instance 1 in single-node
-        if [ "$INSTANCE_COUNT" -eq 1 ]; then
-            fail "netsy-${i} — did not acquire elector leadership"
-        fi
-    fi
+        ELECTOR_FOUND=true
 
-    # Primary election
-    if grep -q "election_completed" "$logfile" 2>/dev/null; then
-        elected=$(grep "election_completed" "$logfile" | tail -1 | grep -o 'elected_node_id=[^ ]*' | cut -d= -f2)
-        pass "netsy-${i} — primary elected (${elected})"
-    else
-        # Count recent election failures
-        fail_count=$(grep -c "election_failed" "$logfile" 2>/dev/null || true)
-        if [ "$fail_count" -gt 0 ]; then
-            last_reason=$(grep "election_failed" "$logfile" | tail -1 | grep -o 'error="[^"]*"' | head -1)
-            fail "netsy-${i} — no primary elected ($fail_count failed attempts, last: $last_reason)"
+        # Primary election (only the elector runs elections)
+        if grep -q "election_completed" "$logfile" 2>/dev/null; then
+            elected=$(grep "election_completed" "$logfile" | tail -1 | grep -o 'elected_node_id=[^ ]*' | cut -d= -f2)
+            pass "netsy-${i} — primary elected (${elected})"
         else
-            warn "netsy-${i} — no election activity found"
+            fail_count=$(grep -c "election_failed" "$logfile" 2>/dev/null || true)
+            if [ "$fail_count" -gt 0 ]; then
+                last_reason=$(grep "election_failed" "$logfile" | tail -1 | grep -o 'error="[^"]*"' | head -1)
+                fail "netsy-${i} — no primary elected ($fail_count failed attempts, last: $last_reason)"
+            else
+                fail "netsy-${i} — elector has no election activity"
+            fi
         fi
     fi
 done
+if [ "$ELECTOR_FOUND" = false ]; then
+    fail "no node acquired elector leadership"
+fi
 
 # ============================================================================
 # 5. Heartbeat Health
@@ -230,6 +242,88 @@ for i in $(seq 1 "$INSTANCE_COUNT"); do
         pass "netsy-${i} — heartbeats healthy, no degradation"
     fi
 done
+
+# ============================================================================
+# 6. Functional Test (write to each node, then read from each node)
+# ============================================================================
+section "Functional Test"
+
+CERTS_DIR="${ROOT_DIR}/temp/certs"
+
+if ! command -v etcdctl &>/dev/null; then
+    warn "etcdctl not found — skipping functional test"
+else
+    ETCD_ARGS=(--cert="${CERTS_DIR}/client.crt" --key="${CERTS_DIR}/client.key" --cacert="${CERTS_DIR}/ca.crt" -w json)
+    TEST_PREFIX="__netsy_check_dev_$$"
+    WRITE_OK=true
+
+    client_port_for() { echo $(( 2378 + ($1 - 1) * 10 )); }
+
+    # Build comma-separated list of all endpoints for fallback routing
+    ALL_ENDPOINTS=""
+    for i in $(seq 1 "$INSTANCE_COUNT"); do
+        [ -n "$ALL_ENDPOINTS" ] && ALL_ENDPOINTS="${ALL_ENDPOINTS},"
+        ALL_ENDPOINTS="${ALL_ENDPOINTS}127.0.0.1:$(client_port_for "$i")"
+    done
+
+    declare -a WRITTEN_VALUES
+
+    # Phase 1: Write a unique key via each node (tests write proxying on replicas)
+    for i in $(seq 1 "$INSTANCE_COUNT"); do
+        client_port=$(client_port_for "$i")
+        test_key="${TEST_PREFIX}_${i}"
+        test_value="check-dev-${i}-$(date +%s)"
+        WRITTEN_VALUES[i]="$test_value"
+
+        TXN="mod(\"${test_key}\") = \"0\"
+
+put \"${test_key}\" \"${test_value}\"
+
+"
+        txn_out=$(echo "${TXN}" | etcdctl "${ETCD_ARGS[@]}" \
+            --endpoints="127.0.0.1:${client_port}" txn 2>&1) || true
+
+        if echo "$txn_out" | grep -q '"succeeded":true'; then
+            pass "netsy-${i} write (:${client_port}) — succeeded"
+        else
+            fail "netsy-${i} write (:${client_port}) — failed"
+            WRITE_OK=false
+        fi
+    done
+
+    # Phase 2: Read all keys from every node (tests replication)
+    if [ "$WRITE_OK" = true ]; then
+        sleep 1
+        for reader in $(seq 1 "$INSTANCE_COUNT"); do
+            client_port=$(client_port_for "$reader")
+            all_found=true
+
+            for writer in $(seq 1 "$INSTANCE_COUNT"); do
+                test_key="${TEST_PREFIX}_${writer}"
+                expected_b64=$(echo -n "${WRITTEN_VALUES[$writer]}" | base64)
+                range_out=$(etcdctl "${ETCD_ARGS[@]}" \
+                    --endpoints="127.0.0.1:${client_port}" get "${test_key}" 2>&1) || true
+
+                if ! echo "$range_out" | grep -q "${expected_b64}"; then
+                    all_found=false
+                    break
+                fi
+            done
+
+            if [ "$all_found" = true ]; then
+                pass "netsy-${reader} read  (:${client_port}) — all ${INSTANCE_COUNT} keys present"
+            else
+                fail "netsy-${reader} read  (:${client_port}) — missing key from netsy-${writer}"
+            fi
+        done
+    fi
+
+    # Cleanup
+    for i in $(seq 1 "$INSTANCE_COUNT"); do
+        test_key="${TEST_PREFIX}_${i}"
+        etcdctl "${ETCD_ARGS[@]}" --endpoints="${ALL_ENDPOINTS}" del "${test_key}" &>/dev/null || true
+    done
+fi
 
 # ============================================================================
 # Summary
