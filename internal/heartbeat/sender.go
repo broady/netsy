@@ -116,8 +116,11 @@ func (s *Sender) runLoop(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			s.sendToElector(ctx)
-			s.sendToPrimaryIfNeeded(ctx)
+			var wg sync.WaitGroup
+			wg.Add(2)
+			go func() { defer wg.Done(); s.sendToElector(ctx) }()
+			go func() { defer wg.Done(); s.sendToPrimaryIfNeeded(ctx) }()
+			wg.Wait()
 		}
 	}
 }
