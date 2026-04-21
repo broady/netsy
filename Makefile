@@ -50,30 +50,42 @@ endif
 # Number of dev instances
 NETSY_COUNT ?= 1
 
-.PHONY: help check git-hooks fmt lint test build proto clean dev restart-dev clean-dev image
+.PHONY: help setup fmt lint precommit test build proto clean start restart stop status tail attach image
 
 help: ## Show available targets
-	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-15s\033[0m %s\n", $$1, $$2}'
+	@echo "Usage: make <target>"
+	@awk 'BEGIN {FS = ":.*?## "} /^##@/ {printf "\n\033[1m%s\033[0m\n", substr($$0, 5)} /^[a-zA-Z_-]+:.*?## / {printf "  \033[36m%-15s\033[0m %s\n", $$1, $$2}' $(MAKEFILE_LIST)
 
-check: ## Verify required tools are installed
+setup: ## Verify required tools and enable git hooks
 	@command -v go >/dev/null 2>&1 || { echo "go is required but not installed"; exit 1; }
 	@command -v air >/dev/null 2>&1 || { echo "air is required but not installed (go install github.com/air-verse/air@latest)"; exit 1; }
 	@command -v overmind >/dev/null 2>&1 || { echo "overmind is required but not installed (brew install overmind)"; exit 1; }
-	@echo "All required tools are installed."
-
-git-hooks: ## Install git hooks
-	@command -v go >/dev/null 2>&1 || { echo "go is required but not installed"; exit 1; }
 	@command -v shellcheck >/dev/null 2>&1 || { echo "shellcheck is required but not installed"; exit 1; }
 	@go tool golangci-lint version >/dev/null 2>&1 || { echo "golangci-lint is required (run 'go get -tool github.com/golangci/golangci-lint/cmd/golangci-lint@latest')"; exit 1; }
+	@echo "All required tools are installed."
 	@cp scripts/pre-commit .git/hooks/pre-commit
 	@chmod +x .git/hooks/pre-commit
 	@echo "Git hooks installed."
 
+##@ Build & Test
+
 fmt: ## Format Go source files
 	@go fmt ./...
 
-lint: ## Run linter
+lint: ## Run linters (Go + shellcheck)
 	@go tool golangci-lint run
+	@echo "Running shellcheck..."
+	@shellcheck scripts/*.sh
+
+precommit: ## Check formatting and run linters (read-only)
+	@echo "Checking formatting..."
+	@UNFORMATTED=$$(gofmt -l . 2>&1); \
+	if [ -n "$$UNFORMATTED" ]; then \
+		echo "The following files need formatting (run 'make fmt'):"; \
+		echo "$$UNFORMATTED"; \
+		exit 1; \
+	fi
+	@$(MAKE) lint
 
 test: ## Run tests with race detector
 	go test -v -race ./...
@@ -104,20 +116,34 @@ proto: ## Generate Go files from protobuf definitions
 clean: ## Remove build artifacts
 	rm -rf $(BINDIR)
 
-dev: ## Start development environment (NETSY_COUNT=N for multiple instances)
+image: ## Build container image
+	docker build -f images/netsy/Containerfile -t ghcr.io/netsy-dev/netsy:latest .
+
+##@ Dev Environment
+
+start: ## Start development environment (NETSY_COUNT=1 by default)
 	@test -f temp/certs/ca.crt || ./scripts/certs.sh $(NETSY_COUNT)
 	@if [ "$(NETSY_COUNT)" -gt 1 ]; then $(MAKE) build; fi
 	@./scripts/check-ports.sh $(NETSY_COUNT)
 	OVERMIND_FORMATION=s3=1,netsy=$(NETSY_COUNT) overmind start
 
-restart-dev: ## Restart all Netsy instances (use after 'make build')
+restart: ## Restart all Netsy instances (use after 'make build')
 	@overmind restart netsy
 
-clean-dev: ## Stop development environment and remove temp files
+stop: ## Stop development environment and remove temp files
 	@-overmind quit 2>/dev/null
 	@rm -rf temp/
 	@rm -f .overmind.sock
 	@echo "Development environment cleaned."
 
-image: ## Build container image
-	docker build -f images/netsy/Containerfile -t ghcr.io/netsy-dev/netsy:latest .
+status: ## Show status of dev processes and ports
+	@./scripts/check-ports.sh $(NETSY_COUNT)
+	@echo ""
+	@echo "Overmind processes:"
+	@overmind ps 2>/dev/null || echo "  No overmind session running."
+
+tail: ## Tail all dev log files
+	@tail -f temp/logs/*.log
+
+attach: ## Attach to overmind tmux session
+	@overmind connect

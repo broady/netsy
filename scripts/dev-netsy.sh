@@ -5,7 +5,7 @@
 
 # Dev server wrapper for running Netsy under Overmind.
 # Supports single-instance (hot reload via Air) and multi-instance (direct binary) modes.
-# Called by overmind via the Procfile — use 'make dev' to start.
+# Called by overmind via the Procfile — use 'make start' to start.
 set -eo pipefail
 
 CURRENT=$(dirname "$(readlink -f "$0")")
@@ -17,7 +17,7 @@ ROOT="${CURRENT}/.."
 # Overmind sets PS to "netsy" (unscaled) or "netsy#1", "netsy#2", ... (scaled).
 if [ -z "${PS:-}" ]; then
     echo "ERROR: PS environment variable not set. This script must be run under Overmind."
-    echo "Use 'make dev' to start the development environment."
+    echo "Use 'make start' to start the development environment."
     exit 1
 fi
 PROC_NUM="${PS##*#}"        # "netsy#2" → "2"
@@ -107,7 +107,7 @@ if [ "${INSTANCE_COUNT}" -le 1 ]; then
     exec air -c "${ROOT}/scripts/.air.toml" 2>&1 | tee "${LOG_FILE}"
 else
     # Multi-instance: run the binary directly in a restart loop.
-    # Use 'make build' before starting, and 'make restart-dev' to pick up changes.
+    # Use 'make build' before starting, and 'make restart' to pick up changes.
     BINARY="${ROOT}/bin/netsy"
     if [ ! -f "${BINARY}" ]; then
         echo "Binary not found at ${BINARY} — run 'make build' first."

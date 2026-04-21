@@ -5,25 +5,5 @@
 set -eo pipefail
 
 echo "Running pre-commit checks..."
-
-# Shellcheck staged .sh files
-STAGED_SH=$(git diff --cached --name-only --diff-filter=ACM -- '*.sh' || true)
-if [ -n "$STAGED_SH" ]; then
-    echo "Running shellcheck..."
-    echo "$STAGED_SH" | xargs shellcheck
-fi
-
-# Check formatting
-echo "Checking formatting..."
-UNFORMATTED=$(gofmt -l . 2>&1 || true)
-if [ -n "$UNFORMATTED" ]; then
-    echo "The following files need formatting (run 'make fmt'):"
-    echo "$UNFORMATTED"
-    exit 1
-fi
-
-# Lint
-echo "Running lint..."
-go tool golangci-lint run
-
+make precommit
 echo "Pre-commit checks passed."

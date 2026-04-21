@@ -51,7 +51,7 @@ echo ""
 if [ "${ERRORS}" -gt 0 ]; then
     echo "✗ ${ERRORS} port(s) already in use. Free them before starting dev."
     echo ""
-    echo "Tip: run 'make clean-dev' to stop stale dev processes."
+    echo "Tip: run 'make stop' to stop stale dev processes."
     exit 1
 else
     echo "✓ All ports are available."

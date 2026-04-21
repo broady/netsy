@@ -1,23 +1,30 @@
 # Netsy — Agent Development Guide
 
-## Build & Test Commands
-
-- **Dev**: `make dev` — starts fake S3 + Air/Netsy via overmind (auto-generates dev certs)
-- **Build**: `make build` — builds netsy binary with version info
-- **Test**: `make test` — run all tests with race detector
-- **Format**: `make fmt` — format Go source files
-- **Lint**: `make lint` — run golangci-lint
-- **Clean**: `make clean` — remove `bin/` directory
-- **Clean Dev**: `make clean-dev` — stop overmind, remove `temp/`, remove `.overmind.sock`
-- **Git Hooks**: `make git-hooks` — install pre-commit hook
-- **Check Tools**: `make check` — verify go, air, overmind are installed
-- **Protobuf**: `make proto` — generates Go files from proto files in `./proto`
-- **Test Package**: `go test -v -race ./internal/peerapi/` — run specific package tests
-
 ### Important
 
 - **Always use `make build`** to build — never use `go build` directly. `make build` injects version info via linker flags that `go build` misses.
 - **Always use `make proto`** to regenerate protobuf files — never run `protoc` directly.
+
+## Build & Test Commands
+
+- **Setup**: `make setup` — verify required tools are installed and enable git hooks
+- **Build**: `make build` — builds netsy binary with version info
+- **Test**: `make test` — run all tests with race detector
+- **Format**: `make fmt` — format Go source files
+- **Lint**: `make lint` — run golangci-lint
+- **Precommit**: `make precommit` — run pre-commit checks (fmt, lint, test)
+- **Clean**: `make clean` — remove `bin/` directory
+- **Protobuf**: `make proto` — generates Go files from proto files in `./proto`
+- **Test Package**: `go test -v -race ./internal/peerapi/` — run specific package tests
+
+## Dev Environment Commands
+
+- **Start**: `make start` — starts fake S3 + Air/Netsy via overmind (auto-generates dev certs)
+- **Stop**: `make stop` — stop overmind, remove `temp/`, remove `.overmind.sock`
+- **Restart**: `make restart` — restart all Netsy instances managed by overmind
+- **Status**: `make status` — show overmind process status
+- **Tail**: `make tail` — tail all dev log files
+- **Attach**: `make attach` — attach to overmind tmux session
 
 ### Dev Logs
 

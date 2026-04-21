@@ -14,14 +14,14 @@ Install the following tools:
 - [Air](https://github.com/air-verse/air) — live reload (`go install github.com/air-verse/air@latest`)
 - [Overmind](https://github.com/DarthSim/overmind) — process manager (`brew install overmind`)
 
-Run `make check` to verify all required tools are installed.
+Run `make setup` to verify all required tools are installed.
 
 ## Quick Start
 
 Start the full development environment (fake S3 server + Netsy with live reload):
 
 ```
-make dev
+make start
 ```
 
 This will:
@@ -38,7 +38,7 @@ Run multiple Netsy instances to test clustering, replication, and leader
 election locally:
 
 ```
-make dev NETSY_COUNT=3
+make start NETSY_COUNT=3
 ```
 
 This will:
@@ -70,7 +70,7 @@ Multi-instance mode does not use Air for hot reload. Instead, rebuild and
 restart:
 
 ```
-make build restart-dev
+make build restart
 ```
 
 This rebuilds the binary and restarts all Netsy instances managed by Overmind.
@@ -103,7 +103,7 @@ overmind echo s3
 
 ## TLS Certificates
 
-Development certificates are generated automatically by `make dev`. The
+Development certificates are generated automatically by `make start`. The
 certificate layout:
 
 ```
@@ -140,7 +140,7 @@ rm -rf temp/certs/ && ./scripts/certs.sh 3
 Reset everything (certs, database, S3 data, logs):
 
 ```
-make clean-dev && make dev
+make stop && make start
 ```
 
 Reset only the database (instance 1):
@@ -163,7 +163,7 @@ Run a kube-apiserver container configured to use Netsy as its etcd backend:
 ./scripts/kube-apiserver.sh
 ```
 
-Press `Ctrl+C` to stop. Requires a running Netsy instance (`make dev`).
+Press `Ctrl+C` to stop. Requires a running Netsy instance (`make start`).
 Helper scripts use instance 1 ports by default.
 
 ## etcdctl
@@ -182,5 +182,5 @@ Helper scripts use instance 1 ports by default.
 Install the pre-commit hook:
 
 ```
-make git-hooks
+make setup
 ```
