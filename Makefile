@@ -125,7 +125,8 @@ start: ## Start development environment (NETSY_COUNT=1 by default)
 	@./scripts/dev/check-ports.sh $(NETSY_COUNT)
 	@test -f temp/certs/ca.crt || ./scripts/dev/certs.sh $(NETSY_COUNT)
 	@if [ "$(NETSY_COUNT)" -gt 1 ]; then $(MAKE) build; fi
-	OVERMIND_FORMATION=s3=1,netsy=$(NETSY_COUNT) overmind start
+	OVERMIND_FORMATION=s3=1,netsy=$(NETSY_COUNT) overmind start -D
+	@echo "Development environment started. Use 'make tail' to view logs."
 
 restart: ## Restart all Netsy instances (use after 'make build')
 	@overmind restart netsy
@@ -141,8 +142,8 @@ status: ## Show status of dev processes and ports
 	@echo "Overmind processes:"
 	@overmind ps 2>/dev/null || echo "  No overmind session running."
 
-tail: ## Tail all dev log files
-	@tail -f temp/logs/*.log
+tail: ## Tail all dev log output (coloured by process)
+	@bash -c 'overmind echo > >(grep --line-buffered -v "^system | Echo #") & pid=$$!; trap "kill $$pid 2>/dev/null; exit 0" INT TERM; wait $$pid'
 
 attach: ## Attach to overmind tmux session
 	@overmind connect
