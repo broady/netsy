@@ -113,7 +113,7 @@ proto: ## Generate Go files from protobuf definitions
 	       --go-grpc_out=$(CURRENT)internal \
 	       --go-grpc_opt=paths=source_relative $(CURRENT)proto/*.proto
 
-clean: ## Remove build artifacts
+clean: stop ## Force-stop dev environment and remove build artifacts
 	rm -rf $(BINDIR)
 
 image: ## Build container image
@@ -122,16 +122,16 @@ image: ## Build container image
 ##@ Dev Environment
 
 start: ## Start development environment (NETSY_COUNT=1 by default)
+	@./scripts/dev/check-ports.sh $(NETSY_COUNT)
 	@test -f temp/certs/ca.crt || ./scripts/dev/certs.sh $(NETSY_COUNT)
 	@if [ "$(NETSY_COUNT)" -gt 1 ]; then $(MAKE) build; fi
-	@./scripts/dev/check-ports.sh $(NETSY_COUNT)
 	OVERMIND_FORMATION=s3=1,netsy=$(NETSY_COUNT) overmind start
 
 restart: ## Restart all Netsy instances (use after 'make build')
 	@overmind restart netsy
 
-stop: ## Stop development environment and remove temp files
-	@-overmind quit 2>/dev/null
+stop: ## Force-stop development environment and remove temp files
+	@overmind kill 2>/dev/null || overmind quit 2>/dev/null || true
 	@rm -rf temp/
 	@rm -f .overmind.sock
 	@echo "Development environment cleaned."

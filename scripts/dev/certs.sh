@@ -23,7 +23,7 @@
 set -eo pipefail
 
 CURRENT=$(dirname "$(readlink -f "$0")")
-CERTS_DIR="${CURRENT}/../temp/certs"
+CERTS_DIR="${CURRENT}/../../temp/certs"
 
 CLUSTER_ID="dev-cluster"
 DAYS_CA=3650

@@ -5,7 +5,7 @@
 set -eo pipefail
 
 CURRENT=$(dirname "$(readlink -f "$0")")
-CERTS_DIR="${CURRENT}/../temp/certs"
+CERTS_DIR="${CURRENT}/../../temp/certs"
 
 USE_NETSY=1
 ENDPOINT=127.0.0.1:2378
@@ -28,5 +28,5 @@ if [ "$USE_NETSY" -eq 0 ]; then
     )
 fi
 
-echo "${CMD[@]//$CURRENT\/..\//}"
+echo "${CMD[@]//$CURRENT\/..\/..\/}"
 "${CMD[@]}" | jq .

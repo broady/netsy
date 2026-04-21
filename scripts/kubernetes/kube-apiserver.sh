@@ -17,7 +17,7 @@ CONTAINER_NAME=kube-apiserver
 trap 'docker stop $CONTAINER_NAME >/dev/null; docker rm $CONTAINER_NAME >/dev/null; exit' INT
 docker run -d --name $CONTAINER_NAME \
   --entrypoint kube-apiserver \
-  -v "${CURRENT}/../temp/certs:/opt/netsy-certs:ro" \
+  -v "${CURRENT}/../../temp/certs:/opt/netsy-certs:ro" \
   -p 8080:8080 \
   -p 6443:6443 \
   "registry.k8s.io/kube-apiserver:${VERSION}" \

@@ -9,7 +9,7 @@
 set -eo pipefail
 
 CURRENT=$(dirname "$(readlink -f "$0")")
-ROOT="${CURRENT}/.."
+ROOT="${CURRENT}/../.."
 
 # ---------------------------------------------------------------------------
 # Instance number from Overmind's PS variable

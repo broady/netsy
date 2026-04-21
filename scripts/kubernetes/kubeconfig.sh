@@ -5,7 +5,7 @@
 set -eo pipefail
 
 CURRENT=$(dirname "$(readlink -f "$0")")
-CERTS_DIR="${CURRENT}/../temp/certs"
+CERTS_DIR="${CURRENT}/../../temp/certs"
 
 # check if kubectl command exists
 command -v kubectl >/dev/null 2>&1 || { echo >&2 "kubectl is required but it's not installed.  Aborting."; exit 1; }
