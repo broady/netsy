@@ -152,13 +152,23 @@ func (r *Runner) Start(ctx context.Context) error {
 }
 
 // WaitForFirstElection blocks until the first election cycle completes,
-// then updates ClusterState with the current Elector.
+// then updates ClusterState with the current Elector. When this node is
+// the leader, it ensures the elector state is set to ElectorLeader
+// before returning — covering both the "Acquired" (fresh) and
+// "Confirmed" (stale record) s3lect paths.
 func (r *Runner) WaitForFirstElection(ctx context.Context) (*s3lect.LeadershipStatus, error) {
 	status, err := r.elector.WaitForNextElection(ctx, time.Time{})
 	if err != nil {
 		return nil, err
 	}
 	r.updateClusterElector(status)
+
+	if status.IsLeader && r.state.Elector() != nodestate.ElectorLeader {
+		if err := r.onAcquireLeadership(); err != nil {
+			return nil, fmt.Errorf("acquire leadership: %w", err)
+		}
+	}
+
 	return status, nil
 }
 
@@ -236,6 +246,9 @@ func (r *Runner) Stop(ctx context.Context) {
 }
 
 func (r *Runner) onAcquireLeadership() error {
+	if r.state.Elector() == nodestate.ElectorLeader {
+		return nil
+	}
 	r.logger.Info("acquired elector leadership")
 	if err := r.state.SetElector(nodestate.ElectorLeader); err != nil {
 		r.logger.Error("failed to transition elector state to leader", "error", err)

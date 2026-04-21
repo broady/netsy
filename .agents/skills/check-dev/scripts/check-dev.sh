@@ -209,7 +209,13 @@ for i in $(seq 1 "$INSTANCE_COUNT"); do
     self_degraded=$(grep -c "node self-degraded" "$logfile" 2>/dev/null || true)
 
     if [ "$self_degraded" -gt 0 ]; then
-        fail "netsy-${i} — node self-degraded ($self_degraded time(s))"
+        # Check if it recovered (became healthy after self-degradation, e.g. after restart)
+        last_health=$(grep "state_type=health" "$logfile" | tail -1 | grep -o 'new=[^ ]*' | cut -d= -f2)
+        if [ "$last_health" = "healthy" ]; then
+            warn "netsy-${i} — self-degraded $self_degraded time(s) but recovered to healthy"
+        else
+            fail "netsy-${i} — node self-degraded ($self_degraded time(s)), current state: $last_health"
+        fi
     elif [ "$degraded_count" -gt 0 ]; then
         # Check if it recovered (became healthy after degradation)
         last_health=$(grep "state_type=health" "$logfile" | tail -1 | grep -o 'new=[^ ]*' | cut -d= -f2)
