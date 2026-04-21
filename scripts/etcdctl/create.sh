@@ -20,4 +20,4 @@ put \"${KEY}\" \"${VALUE}\"
 "
 
 echo -n "echo '${TXN}' | "
-echo "${TXN}" | ${CURRENT}/etcdctl.sh txn
+echo "${TXN}" | "${CURRENT}/etcdctl.sh" txn

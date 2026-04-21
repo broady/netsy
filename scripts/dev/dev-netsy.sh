@@ -104,7 +104,7 @@ fi
 # ---------------------------------------------------------------------------
 if [ "${INSTANCE_COUNT}" -le 1 ]; then
     # Single-instance: use Air for hot reload
-    exec air -c "${ROOT}/scripts/.air.toml" 2>&1 | tee "${LOG_FILE}"
+    exec air -c "${ROOT}/scripts/dev/.air.toml" 2>&1 | tee "${LOG_FILE}"
 else
     # Multi-instance: run the binary directly in a restart loop.
     # Use 'make build' before starting, and 'make restart' to pick up changes.

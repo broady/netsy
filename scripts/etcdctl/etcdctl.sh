@@ -15,10 +15,10 @@ if [[ "$NETSY" = 0 ]] || [[ "$NETSY" = "false" ]]; then
 fi
 
 CMD=(
-    etcdctl --cert=${CERTS_DIR}/client.crt
-            --key=${CERTS_DIR}/client.key
-            --cacert=${CERTS_DIR}/ca.crt
-            --endpoints=${ENDPOINT}
+    etcdctl "--cert=${CERTS_DIR}/client.crt"
+            "--key=${CERTS_DIR}/client.key"
+            "--cacert=${CERTS_DIR}/ca.crt"
+            "--endpoints=${ENDPOINT}"
             -w json
     "$@"
 )
@@ -29,4 +29,4 @@ if [ "$USE_NETSY" -eq 0 ]; then
 fi
 
 echo "${CMD[@]//$CURRENT\/..\//}"
-${CMD[@]} | jq .
+"${CMD[@]}" | jq .

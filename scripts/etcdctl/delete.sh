@@ -21,4 +21,4 @@ get \"${KEY}\"
 "
 
 echo -n "echo '${TXN}' | "
-echo "${TXN}" | ${CURRENT}/etcdctl.sh txn
+echo "${TXN}" | "${CURRENT}/etcdctl.sh" txn

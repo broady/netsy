@@ -125,14 +125,14 @@ temp/certs/
 Generate certs manually:
 
 ```
-./scripts/certs.sh        # 1 instance (default)
-./scripts/certs.sh 3      # 3 instances
+./scripts/dev/certs.sh        # 1 instance (default)
+./scripts/dev/certs.sh 3      # 3 instances
 ```
 
 Regenerate all certificates:
 
 ```
-rm -rf temp/certs/ && ./scripts/certs.sh 3
+rm -rf temp/certs/ && ./scripts/dev/certs.sh 3
 ```
 
 ## Resetting Dev Data
@@ -160,7 +160,7 @@ rm -rf temp/dev-s3/
 Run a kube-apiserver container configured to use Netsy as its etcd backend:
 
 ```
-./scripts/kube-apiserver.sh
+./scripts/kubernetes/kube-apiserver.sh
 ```
 
 Press `Ctrl+C` to stop. Requires a running Netsy instance (`make start`).
@@ -171,8 +171,8 @@ Helper scripts use instance 1 ports by default.
 Run `etcdctl` with the correct certs and endpoint:
 
 ```
-./scripts/etcdctl.sh endpoint status
-./scripts/etcdctl.sh get "" --prefix
+./scripts/etcdctl/etcdctl.sh endpoint status
+./scripts/etcdctl/etcdctl.sh get "" --prefix
 ```
 
 Helper scripts use instance 1 ports by default.

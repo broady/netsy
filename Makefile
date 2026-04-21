@@ -63,7 +63,7 @@ setup: ## Verify required tools and enable git hooks
 	@command -v shellcheck >/dev/null 2>&1 || { echo "shellcheck is required but not installed"; exit 1; }
 	@go tool golangci-lint version >/dev/null 2>&1 || { echo "golangci-lint is required (run 'go get -tool github.com/golangci/golangci-lint/cmd/golangci-lint@latest')"; exit 1; }
 	@echo "All required tools are installed."
-	@cp scripts/pre-commit .git/hooks/pre-commit
+	@cp scripts/git-hooks/pre-commit .git/hooks/pre-commit
 	@chmod +x .git/hooks/pre-commit
 	@echo "Git hooks installed."
 
@@ -75,7 +75,7 @@ fmt: ## Format Go source files
 lint: ## Run linters (Go + shellcheck)
 	@go tool golangci-lint run
 	@echo "Running shellcheck..."
-	@shellcheck scripts/*.sh
+	@shellcheck scripts/**/*.sh
 
 precommit: ## Check formatting and run linters (read-only)
 	@echo "Checking formatting..."
@@ -122,9 +122,9 @@ image: ## Build container image
 ##@ Dev Environment
 
 start: ## Start development environment (NETSY_COUNT=1 by default)
-	@test -f temp/certs/ca.crt || ./scripts/certs.sh $(NETSY_COUNT)
+	@test -f temp/certs/ca.crt || ./scripts/dev/certs.sh $(NETSY_COUNT)
 	@if [ "$(NETSY_COUNT)" -gt 1 ]; then $(MAKE) build; fi
-	@./scripts/check-ports.sh $(NETSY_COUNT)
+	@./scripts/dev/check-ports.sh $(NETSY_COUNT)
 	OVERMIND_FORMATION=s3=1,netsy=$(NETSY_COUNT) overmind start
 
 restart: ## Restart all Netsy instances (use after 'make build')
@@ -137,7 +137,7 @@ stop: ## Stop development environment and remove temp files
 	@echo "Development environment cleaned."
 
 status: ## Show status of dev processes and ports
-	@./scripts/check-ports.sh $(NETSY_COUNT)
+	@./scripts/dev/check-ports.sh $(NETSY_COUNT)
 	@echo ""
 	@echo "Overmind processes:"
 	@overmind ps 2>/dev/null || echo "  No overmind session running."
