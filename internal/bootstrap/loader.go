@@ -90,16 +90,39 @@ func Run(
 			return nil, fmt.Errorf("register with local elector: %w", err)
 		}
 	} else {
-		client := peers.ElectorClient()
-		if client == nil {
-			return nil, fmt.Errorf("elector client is not connected")
-		}
-		registerResp, err = client.RegisterNode(ctx, registerReq)
-		if err != nil {
-			if metrics != nil {
-				metrics.RegistrationDuration.WithLabelValues("error").Observe(time.Since(regStart).Seconds())
+		const maxRegistrationAttempts = 3
+		backoff := 500 * time.Millisecond
+		for attempt := 1; ; attempt++ {
+			client := peers.ElectorClient()
+			if client == nil {
+				if attempt >= maxRegistrationAttempts {
+					return nil, fmt.Errorf("elector client is not connected")
+				}
+			} else {
+				registerResp, err = client.RegisterNode(ctx, registerReq)
+				if err == nil {
+					break
+				}
+				if attempt >= maxRegistrationAttempts {
+					if metrics != nil {
+						metrics.RegistrationDuration.WithLabelValues("error").Observe(time.Since(regStart).Seconds())
+					}
+					return nil, fmt.Errorf("register with elector: %w", err)
+				}
 			}
-			return nil, fmt.Errorf("register with elector: %w", err)
+			logger.Info("elector not ready, retrying registration",
+				"attempt", attempt,
+				"backoff", backoff,
+				"error", err,
+			)
+			select {
+			case <-ctx.Done():
+				return nil, fmt.Errorf("register with elector: %w", ctx.Err())
+			case <-time.After(backoff):
+			}
+			if backoff < 5*time.Second {
+				backoff *= 2
+			}
 		}
 	}
 	if metrics != nil {

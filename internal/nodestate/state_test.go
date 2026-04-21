@@ -38,7 +38,7 @@ func TestHealthTransitions(t *testing.T) {
 		{"degraded->loading", HealthDegraded, HealthLoading, false},
 		{"loading->degraded", HealthLoading, HealthDegraded, false},
 		{"healthy->loading", HealthHealthy, HealthLoading, true},
-		{"degraded->healthy", HealthDegraded, HealthHealthy, true},
+		{"degraded->healthy", HealthDegraded, HealthHealthy, false},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

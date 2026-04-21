@@ -105,12 +105,6 @@ func (m *Manager) ApplyClusterState(ctx context.Context, cs nodestate.ClusterSta
 		}
 	}
 
-	// Notify role change listeners when the Primary role changes for
-	// this node (e.g. to start/stop the replication follower).
-	if m.onPrimaryChange != nil && wasPrimary != isPrimary {
-		m.onPrimaryChange(isPrimary)
-	}
-
 	// Update Elector connection if changed.
 	if cs.Elector.PeerAdvertiseAddr != old.Elector.PeerAdvertiseAddr {
 		m.updateElector(cs.Elector)
@@ -119,6 +113,18 @@ func (m *Manager) ApplyClusterState(ctx context.Context, cs nodestate.ClusterSta
 	// Update Primary connection if changed.
 	if cs.Primary.PeerAdvertiseAddr != old.Primary.PeerAdvertiseAddr || cs.Primary.NodeID != old.Primary.NodeID {
 		m.updatePrimary(cs.Primary)
+	}
+
+	// Notify role change listeners when the Primary role changes for
+	// this node (e.g. to start/stop the replication follower), or when
+	// a remote Primary appears for the first time and this node is a
+	// Replica that needs to start following it. Runs after connection
+	// updates so the follower can use the new Primary connection.
+	if m.onPrimaryChange != nil {
+		remotePrimaryAppeared := old.Primary.NodeID == "" && cs.Primary.NodeID != "" && !isPrimary
+		if wasPrimary != isPrimary || remotePrimaryAppeared {
+			m.onPrimaryChange(isPrimary)
+		}
 	}
 }
 

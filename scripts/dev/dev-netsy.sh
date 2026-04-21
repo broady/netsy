@@ -117,6 +117,12 @@ else
         exit 1
     fi
 
+    # Stagger non-primary instances so the elector's peer gRPC server
+    # is ready before other nodes attempt registration.
+    if [ "${PROC_NUM}" -gt 1 ]; then
+        sleep 1
+    fi
+
     while true; do
         echo "[instance ${PROC_NUM}] Starting ${BINARY}..."
         "${BINARY}" 2>&1 | tee -a "${LOG_FILE}" || true

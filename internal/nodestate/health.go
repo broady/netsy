@@ -17,7 +17,7 @@ const (
 var validHealthTransitions = map[HealthState][]HealthState{
 	HealthLoading:  {HealthHealthy, HealthDegraded},
 	HealthHealthy:  {HealthDegraded},
-	HealthDegraded: {HealthLoading},
+	HealthDegraded: {HealthLoading, HealthHealthy},
 }
 
 func validHealthTransition(from, to HealthState) bool {
