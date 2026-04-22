@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"sync"
 	"time"
 
 	"google.golang.org/grpc/codes"
@@ -26,6 +27,14 @@ import (
 // RevisionSource provides the latest revision for election tie-breaking.
 type RevisionSource interface {
 	LatestRevision() (int64, error)
+}
+
+// HeartbeatForwarder forwards heartbeats to another subsystem. When the
+// node is both Elector and Primary, heartbeats received by the Elector
+// are forwarded to the Primary so that its replica health tracker is
+// updated using the same server-side code path.
+type HeartbeatForwarder interface {
+	SendHeartbeat(context.Context, *proto.NodeState) (*emptypb.Empty, error)
 }
 
 // Server implements the proto.ElectorServer gRPC interface. It is only
@@ -57,6 +66,9 @@ type Server struct {
 
 	metrics      *Metrics
 	retryMetrics *metrics.RetryMetrics
+
+	heartbeatForwarderMu sync.RWMutex
+	heartbeatForwarder   HeartbeatForwarder
 }
 
 // NewServer creates a new Elector gRPC server.
@@ -95,6 +107,14 @@ func NewServer(
 		metrics:             m,
 		retryMetrics:        retryMetrics,
 	}
+}
+
+// SetHeartbeatForwarder sets or clears the forwarder that receives a copy
+// of every heartbeat processed by the Elector. Pass nil to clear.
+func (s *Server) SetHeartbeatForwarder(f HeartbeatForwarder) {
+	s.heartbeatForwarderMu.Lock()
+	s.heartbeatForwarder = f
+	s.heartbeatForwarderMu.Unlock()
 }
 
 // RegisterNode registers a node with the Elector, allocating or reusing a
@@ -200,8 +220,11 @@ func (s *Server) GetClusterState(_ context.Context, _ *emptypb.Empty) (resp *pro
 }
 
 // SendHeartbeat receives a NodeState heartbeat from a Node, updating the
-// node map with the latest heartbeat timestamp and reported state.
-func (s *Server) SendHeartbeat(_ context.Context, req *proto.NodeState) (_ *emptypb.Empty, err error) {
+// node map with the latest heartbeat timestamp and reported state. When a
+// HeartbeatForwarder is set (i.e. this node is also the Primary), the
+// heartbeat is forwarded so the Primary's replica tracker is updated
+// using the same server-side code path.
+func (s *Server) SendHeartbeat(ctx context.Context, req *proto.NodeState) (_ *emptypb.Empty, err error) {
 	if err := s.requireLeader(); err != nil {
 		return nil, err
 	}
@@ -214,6 +237,17 @@ func (s *Server) SendHeartbeat(_ context.Context, req *proto.NodeState) (_ *empt
 
 	if !s.nodeMap.UpdateHeartbeat(req.GetNodeId(), time.Now(), health, primary, req.GetLatestRevision(), req.GetStartTime()) {
 		return nil, status.Errorf(codes.NotFound, "node %s is not registered", req.GetNodeId())
+	}
+
+	s.heartbeatForwarderMu.RLock()
+	fwd := s.heartbeatForwarder
+	s.heartbeatForwarderMu.RUnlock()
+	if fwd != nil && req.GetNodeId() != s.localNodeID {
+		// Best-effort: the primary may not know this replica yet (e.g.
+		// follow stream not established), so NotFound errors are expected.
+		if _, err := fwd.SendHeartbeat(ctx, req); err != nil {
+			s.logger.Debug("heartbeat forward to primary skipped", "node_id", req.GetNodeId(), "error", err)
+		}
 	}
 
 	return &emptypb.Empty{}, nil

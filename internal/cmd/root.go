@@ -502,7 +502,9 @@ func NewRootCmd() *cobra.Command {
 			if isPrimary {
 				follower.Stop()
 				primarySrv.StartServices(ctx)
+				electionRunner.ElectorServer().SetHeartbeatForwarder(primarySrv)
 			} else {
+				electionRunner.ElectorServer().SetHeartbeatForwarder(nil)
 				primarySrv.StopServices()
 				if err := follower.Start(ctx); err != nil {
 					filteredLogger.Error("failed to start follower", "error", err)
@@ -514,6 +516,7 @@ func NewRootCmd() *cobra.Command {
 		// Primary, so start Primary services immediately in that case.
 		if state.ClusterState().Primary.NodeID == c.NodeID {
 			primarySrv.StartServices(ctx)
+			electionRunner.ElectorServer().SetHeartbeatForwarder(primarySrv)
 		}
 
 		// Block until SIGTERM/SIGINT or gRPC server error
