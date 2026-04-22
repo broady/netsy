@@ -32,6 +32,7 @@ Unless otherwise noted below:
 | Watch | `Watch` | Watch event delivery is gated by `committed_revision`, and watch admission is constrained by compaction state. |
 | Lease | `LeaseGrant` | `LeaseGrant` returns a synthetic response but does not implement real lease storage or expiry semantics. It should not be treated as etcd-compatible lease behavior. |
 | Cluster | `MemberList` | Non-Elector Nodes proxy to the Elector, which answers from its in-memory Node map using stable etcd `member_id`s from `members.json`. |
+| Maintenance | `Alarm` | Netsy does not implement real alarm semantics (NOSPACE, CORRUPT). When the node's Health State is `Healthy`, an empty alarm list is returned. When the node is `Loading` or `Degraded`, a `CORRUPT` alarm is returned so that `etcdctl endpoint health` correctly reports the node as unhealthy. |
 | Maintenance | `Status` | `Status` is a local response: `leader` maps to the current Primary's stable etcd `member_id` from current Cluster State, `db_size`/`db_size_in_use` come from local SQLite, `errors` reflect local Health State, and Raft-only fields stay static. |
 
 ## Unsupported RPCs
@@ -49,7 +50,6 @@ Unless otherwise noted below:
 | Cluster | `MemberRemove` | Same as above. |
 | Cluster | `MemberUpdate` | Same as above. |
 | Cluster | `MemberPromote` | Netsy has no learner role, so this remains unsupported. |
-| Maintenance | `Alarm` | Returns `Unimplemented`. |
 | Maintenance | `Defragment` | Returns `Unimplemented`. |
 | Maintenance | `Hash` | Returns `Unimplemented`. |
 | Maintenance | `HashKV` | Returns `Unimplemented`. |
