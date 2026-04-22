@@ -63,7 +63,7 @@ func Range(db localdb.Database, ctx context.Context, r *pb.RangeRequest) (*pb.Ra
 	} else if bytes.Equal(r.RangeEnd, zeroByte) {
 		// rangeEnd is zero bytes, get all keys greater than or equal to r.Key
 		// key > r.Key
-		queryWhere = "key >= ?" // TODO: verify > works as expected
+		queryWhere = "key >= ?"
 		queryArgs = []any{r.Key}
 	} else if bytes.Equal(r.RangeEnd, rangeEndPrefixValue) {
 		// get all keys matching prefix, where key is the prefix
@@ -73,13 +73,13 @@ func Range(db localdb.Database, ctx context.Context, r *pb.RangeRequest) (*pb.Ra
 		// (e.g., “aa”+1 == “ab”, “a\xff”+1 == “b”),
 		// then the range represents all keys prefixed with key."
 		// key LIKE prefix%
-		queryWhere = "key LIKE ?" /// TODO: verify ? works as expected
+		queryWhere = "key LIKE ?"
 		queryArgs = []any{append(r.Key, byte(37))}
 	} else {
 		// range; get all keys from r.Key to less than r.RangeEnd
 		// key >= r.Key
 		// AND key < r.RangeEnd
-		queryWhere = "key >= ? AND key < ?" // TODO: verify >= and < works as expected
+		queryWhere = "key >= ? AND key < ?"
 		queryArgs = []any{r.Key, r.RangeEnd}
 	}
 

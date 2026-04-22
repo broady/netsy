@@ -29,7 +29,7 @@ type gcsProvider struct {
 // newGCSProvider creates a new GCS provider with the provided configuration.
 // Authentication uses Application Default Credentials or GOOGLE_APPLICATION_CREDENTIALS.
 func newGCSProvider(cfg *config.Config, logger *slog.Logger) (*gcsProvider, error) {
-	client, err := gcsstorage.NewClient(context.TODO())
+	client, err := gcsstorage.NewClient(context.Background())
 	if err != nil {
 		return nil, fmt.Errorf("failed to create GCS client: %w", err)
 	}

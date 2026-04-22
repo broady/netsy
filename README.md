@@ -1,20 +1,18 @@
 # Netsy
 
-Netsy is an [etcd](https://etcd.io/) alternative for Kubernetes which stores data in S3 (or S3-compatible) object storage.
+[Netsy](https://netsy.dev) is a replicated key-value database which stores data in object storage. It implements a subset of the [etcd](https://etcd.io/) API (Range, Txn, Watch) and can be used as a drop-in etcd replacement for Kubernetes or as a general-purpose KV store for applications that need durable, low-latency persistence without the operational complexity of running a traditional database.
 
-Unlike etcd which uses the Raft consensus algorithm, the design of Netsy multi-node replication is inspired by PostgreSQL synchronous streaming replication, and by modern architectures of systems like Loki/Mimir and OpenObserve which use S3 (or S3-compatible) object storage for data persistence.
+Unlike etcd which uses the Raft consensus algorithm, Netsy's multi-node replication is inspired by PostgreSQL synchronous streaming replication, and by modern architectures of systems like Loki/Mimir and OpenObserve which use object storage for data persistence.
 
-__Read the [announcement blog post](https://nadrama.com/blog/introducing-netsy) to learn more about the history and evolution of Netsy.__
-
-Netsy was created by [Nadrama](https://nadrama.com). Nadrama helps you deploy containers, in your cloud account, in minutes. Nadrama uses Netsy in production for its Kubernetes clusters!
+Netsy is an Open Source project, created by [Nadrama](https://nadrama.com).
 
 ## Goals
 
-Netsy was created to reduce the operational complexity and compute requirements traditionally associated with running etcd for Kubernetes clusters.
+Netsy was created to reduce operational complexity by providing durable, replicated key-value storage with the cost and reliability advantages of object storage, without the latency trade-offs.
 
-* S3 MUST be the permanent data store. 
+* Object storage MUST be the permanent data store.
 
-* If S3 writes are async, data MUST be able to be replicated to at least one node.
+* Data MUST be durably stored — either synchronously in object storage, or via quorum-based replication — before being acknowledged
 
 * Netsy MUST maintain compatibility with the subset of the etcd API used by Kubernetes.
 
@@ -22,16 +20,14 @@ Netsy was created to reduce the operational complexity and compute requirements 
 
 ## Project Status
 
-The aim of the current branch is to add multi-node support to Netsy. The first version of Netsy was a single-node developer preview release.
-
-Nadrama is committed to Open Source - read more [here](https://nadrama.com/opensource).
+Netsy supports multi-node clusters with quorum-based replication, automatic leader election via s3lect, and graceful failover.
 
 Current Features:
 
 * KV ranges, KV transactions, Watches - supporting all options used by Kubernetes  
-* S3 snapshots - full copies of records from leader SQLite database stored in S3  
-* S3 chunking - delta of records from last snapshot stored in S3 chunk files  
-* Backfill from S3 - starting a a fresh server restores from snapshots+chunks in S3  
+* Snapshots - full copies of records from leader SQLite database stored in object storage  
+* Chunking - delta of records from last snapshot stored in object storage chunk files  
+* Backfill from object storage - starting a fresh server restores from snapshots+chunks  
 * Compaction - cluster-wide protocol to remove values from historical revisions
 
 Roadmap:
@@ -40,25 +36,9 @@ Roadmap:
 * Encryption - supporting value field encryption, with rolling key rotation  
 * Leases - used by Kubernetes.
 
-## Usage
-
-Build:
-
-```
-make build
-```
-
-Run:
-
-```
-./bin/netsy
-```
-
-See [docs/deployment/config.md](docs/deployment/config.md) for configuration reference.
-
 ## Documentation
 
-Check out the comprehensive documentation in [./docs](./docs) or read it rendered on the official Netsy website at <https://netsy.dev>
+Check out the comprehensive documentation in [./docs](./docs) or read it rendered on the official Netsy website at [netsy.dev](https://netsy.dev)
 
 ## Development
 

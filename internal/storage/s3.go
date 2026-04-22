@@ -36,7 +36,7 @@ type s3Provider struct {
 // AWS_SECRET_ACCESS_KEY, AWS_SESSION_TOKEN from env automatically via LoadDefaultConfig.
 func newS3Provider(cfg *config.Config, logger *slog.Logger) (*s3Provider, error) {
 	// Load AWS config - SDK reads region, endpoint, and credentials from env
-	awsCfg, err := awsconfig.LoadDefaultConfig(context.TODO())
+	awsCfg, err := awsconfig.LoadDefaultConfig(context.Background())
 	if err != nil {
 		return nil, fmt.Errorf("failed to load AWS config: %w", err)
 	}
