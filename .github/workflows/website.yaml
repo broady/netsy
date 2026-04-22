@@ -22,7 +22,7 @@ jobs:
         with:
           app-id: ${{ secrets.WEBSITE_SYNC_APP_ID }}
           private-key: ${{ secrets.WEBSITE_SYNC_APP_KEY }}
-          owner: nstance-dev
+          owner: netsy-dev
           repositories: website
 
       - name: Trigger website deploy workflow
