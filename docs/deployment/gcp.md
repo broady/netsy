@@ -1,6 +1,6 @@
 ---
 title: "Google Cloud"
-weight: 50
+weight: 60
 description: "How to run Netsy on Google Cloud (GCP)"
 ---
 

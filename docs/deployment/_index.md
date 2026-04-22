@@ -12,3 +12,4 @@ description: "Deploying and running Netsy"
 - [Kubernetes](kubernetes.md) – Deploying Netsy on Kubernetes using the Helm chart
 - [AWS](aws.md) – How to run Netsy on AWS
 - [Google Cloud](gcp.md) – How to run Netsy on Google Cloud
+- [Nstance](nstance.md) – Deploying Netsy to auto-scaled VMs using Nstance
