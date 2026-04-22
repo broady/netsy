@@ -25,16 +25,11 @@ GOOS ?= $(shell go env GOOS)
 GOARCH ?= $(shell go env GOARCH)
 CGO_ENABLED=1
 EXTRA_LD_FLAGS=
+CC ?= cc
+CXX ?= c++
 ifeq ($(GOOS),linux)
 	BUILD_TAGS=linux
 	EXTRA_LD_FLAGS=-extldflags -static
-	ifeq ($(GOARCH),amd64)
-		CC=x86_64-linux-musl-gcc
-		CXX=x86_64-linux-musl-g++
-	else ifeq ($(GOARCH),arm64)
-		CC=aarch64-linux-musl-gcc
-		CXX=aarch64-linux-musl-g++
-	endif
 else ifeq ($(GOOS),darwin)
 	ifeq ($(GOARCH),amd64)
 		BUILD_TAGS=darwin amd64

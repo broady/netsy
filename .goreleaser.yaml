@@ -21,7 +21,6 @@ builds:
 
     ldflags:
       - -s -w
-      - -extldflags -static
       - -X github.com/netsy-dev/netsy/internal/buildvars.buildVersion={{ .Version }}
       - -X github.com/netsy-dev/netsy/internal/buildvars.buildDate={{ .Date }}
       - -X github.com/netsy-dev/netsy/internal/buildvars.commitHash={{ .ShortCommit }}
@@ -34,24 +33,14 @@ builds:
       - linux_arm64
 
     overrides:
-      # Musl cross-compilers for static linking.
-      - goos: linux
-        goarch: amd64
-        env:
-          - CGO_ENABLED=1
-          - CC=x86_64-linux-musl-gcc
-          - CXX=x86_64-linux-musl-g++
-
       - goos: linux
         goarch: arm64
         env:
-          - CGO_ENABLED=1
-          - CC=aarch64-linux-musl-gcc
-          - CXX=aarch64-linux-musl-g++
+          - CC=aarch64-linux-gnu-gcc
 
 archives:
   - id: default
-    format: tar.gz
+    formats: [tar.gz]
     name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
     files:
       - LICENSE
