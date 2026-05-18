@@ -8,6 +8,7 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"os"
 	"path/filepath"
 	"testing"
 	"time"
@@ -65,6 +66,45 @@ func TestDownloadAndImportFile(t *testing.T) {
 	}
 	if string(got.GetValue()) != string(record.GetValue()) {
 		t.Fatalf("FindRecordByRev().Value = %q, want %q", got.GetValue(), record.GetValue())
+	}
+}
+
+func TestDownloadAndImportFileCleansLargeTempFileOnReaderError(t *testing.T) {
+	t.Parallel()
+
+	db := openDatastoreTestDB(t)
+	store := storage.NewMemoryStore()
+	tempDir := t.TempDir()
+	key := ChunkKey(99)
+	payload := bytes.Repeat([]byte("not-a-valid-netsy-file"), 150000)
+	if len(payload) <= 2*1024*1024 {
+		t.Fatalf("payload size = %d, want larger than temp-file threshold", len(payload))
+	}
+	if err := store.Put(context.Background(), key, payload); err != nil {
+		t.Fatalf("store.Put() error = %v", err)
+	}
+
+	err := DownloadAndImportFile(
+		context.Background(),
+		slog.Default(),
+		db,
+		store,
+		tempDir,
+		key,
+		int64(len(payload)),
+		pb.FileKind_KIND_CHUNK,
+		nil,
+	)
+	if err == nil {
+		t.Fatal("DownloadAndImportFile() error = nil, want invalid datafile error")
+	}
+
+	entries, err := os.ReadDir(tempDir)
+	if err != nil {
+		t.Fatalf("ReadDir() error = %v", err)
+	}
+	if len(entries) != 0 {
+		t.Fatalf("temp dir contains %d entries after failed import, want 0", len(entries))
 	}
 }
 
