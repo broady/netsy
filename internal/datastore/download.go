@@ -80,7 +80,7 @@ func DownloadAndImportFile(
 	storageMetrics *metrics.ObjectStorageMetrics,
 ) error {
 	var tempFiles []string
-	defer cleanupTempFiles(logger, tempFiles)
+	defer func() { cleanupTempFiles(logger, tempFiles) }()
 
 	readStart := time.Now()
 	reader, err := Download(ctx, store, key, size, dataDir, &tempFiles)
