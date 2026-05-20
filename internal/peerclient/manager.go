@@ -44,6 +44,7 @@ type Manager struct {
 	onPrimaryChange PrimaryChangeFunc
 	localElector    LocalElectorServer
 
+	applyMu       sync.Mutex // serializes ApplyClusterState calls
 	mu            sync.Mutex
 	electorAddr   string
 	electorConn   *grpc.ClientConn
@@ -84,6 +85,9 @@ func (m *Manager) SetPrimaryChangeFunc(fn PrimaryChangeFunc) {
 // transitions and reconnects gRPC clients to the current Elector
 // and Primary.
 func (m *Manager) ApplyClusterState(ctx context.Context, cs nodestate.ClusterState) {
+	m.applyMu.Lock()
+	defer m.applyMu.Unlock()
+
 	old := m.state.ClusterState()
 	m.state.SetClusterState(cs)
 
