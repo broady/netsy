@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"sync"
 	"time"
 
 	"github.com/nadrama-com/s3lect"
@@ -37,6 +38,7 @@ type Runner struct {
 	state        *nodestate.State
 	server       *Server
 	leaderCancel context.CancelFunc // cancels bootstrap and deregistration loop on leadership loss
+	leaderWg    sync.WaitGroup     // tracks goroutines spawned during leadership
 }
 
 // New creates a Runner that is ready to start. It configures the s3lect
@@ -262,15 +264,23 @@ func (r *Runner) onAcquireLeadership() error {
 	ctx, cancel := context.WithCancel(context.Background())
 	r.leaderCancel = cancel
 
+	r.leaderWg.Add(1)
 	go func() {
+		defer r.leaderWg.Done()
 		if err := r.server.Bootstrap(ctx); err != nil {
-			r.logger.Error("elector bootstrap failed", "error", err)
+			r.logger.Error("elector bootstrap failed, resigning leadership", "error", err)
+			r.leaderCancel()
 			return
 		}
 		// Start primary election loop after bootstrap completes.
-		go r.server.runPrimaryElectionLoop(ctx)
+		r.server.runPrimaryElectionLoop(ctx)
 	}()
-	go r.server.runHealthCheckLoop(ctx)
+
+	r.leaderWg.Add(1)
+	go func() {
+		defer r.leaderWg.Done()
+		r.server.runHealthCheckLoop(ctx)
+	}()
 
 	return nil
 }
@@ -281,9 +291,10 @@ func (r *Runner) onLoseLeadership() error {
 		r.leaderCancel()
 		r.leaderCancel = nil
 	}
+	r.leaderWg.Wait()
 	r.server.nodeMap.Reset()
 	r.state.SetClusterPrimary(nodestate.NodeInfo{})
-	r.server.previousPrimary = nodestate.NodeInfo{}
+	r.server.previousPrimary.Store(&nodestate.NodeInfo{})
 	if err := r.state.SetElector(nodestate.ElectorFollower); err != nil {
 		r.logger.Error("failed to transition elector state to follower", "error", err)
 	}

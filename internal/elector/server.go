@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"log/slog"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"google.golang.org/grpc/codes"
@@ -62,7 +63,7 @@ type Server struct {
 	// previousPrimary holds the identity of the last known Primary so
 	// that checkPreviousPrimary can contact it for a drain check even
 	// after the Primary has been cleared from ClusterState.
-	previousPrimary nodestate.NodeInfo
+	previousPrimary atomic.Pointer[nodestate.NodeInfo]
 
 	metrics      *Metrics
 	retryMetrics *metrics.RetryMetrics
