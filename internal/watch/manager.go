@@ -124,21 +124,35 @@ func (m *Manager) Distribute(record *proto.Record, prevRecord *proto.Record) {
 
 	// loop over all watchers
 	for _, w := range m.watchers {
-		// obtain lock for all watcher watches
 		w.RLock()
-		defer w.RUnlock()
-		// send to all watches that should receive the record
 		for watchID, watch := range w.watches {
 			if isWatchMatch(watch, record) {
-				msg.WatchId = watchID
+				// shallow copy the Event so queued messages do not
+				// share the same pointer (prevents PrevKv corruption).
+				ev := *msg.Events[0]
 				if watch.prevKv {
-					msg.Events[0].PrevKv = msgPrevKv
+					ev.PrevKv = msgPrevKv
 				} else {
-					msg.Events[0].PrevKv = nil
+					ev.PrevKv = nil
 				}
-				w.inboxCh <- msg
+				outMsg := msg
+				outMsg.Events = []*mvccpb.Event{&ev}
+				outMsg.WatchId = watchID
+
+				// non-blocking send: drop event if the watcher's
+				// inbox is full (slow/disconnected client).
+				select {
+				case w.inboxCh <- outMsg:
+				default:
+					m.logger.Warn("dropped watch event: watcher inbox full",
+						"watcher_id", w.id,
+						"watch_id", watchID,
+						"revision", record.Revision,
+					)
+				}
 			}
 		}
+		w.RUnlock()
 	}
 }
 
