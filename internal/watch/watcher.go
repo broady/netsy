@@ -427,6 +427,9 @@ func isWatchMatch(w watchEntry, record *proto.Record) bool {
 
 // isInRange checks if a key is in the range e.g. of a watch.
 func isInRange(key []byte, rangeKey []byte, rangeEnd []byte) bool {
+	if len(rangeKey) == 0 {
+		return false
+	}
 	// determine case (similar to etcdapi_kv_range.go Range)
 	zeroByte := []byte{0}
 	rangeKeyAndZeroByte := append(rangeKey, byte(0))

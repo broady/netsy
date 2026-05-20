@@ -11,16 +11,13 @@ import (
 	pb "go.etcd.io/etcd/api/v3/etcdserverpb"
 )
 
-func TestIsInRangeEmptyRangeKeyReproducesPanic(t *testing.T) {
+func TestIsInRangeEmptyRangeKeyReturnsFalse(t *testing.T) {
 	t.Parallel()
 
-	defer func() {
-		if recovered := recover(); recovered == nil {
-			t.Fatal("isInRange() did not panic for an empty range key")
-		}
-	}()
-
-	_ = isInRange([]byte("record-key"), nil, []byte("z"))
+	got := isInRange([]byte("record-key"), nil, []byte("z"))
+	if got {
+		t.Fatal("isInRange() returned true for an empty range key, want false")
+	}
 }
 
 func TestIsInRangeMutatesRangeKeyBackingArray(t *testing.T) {
