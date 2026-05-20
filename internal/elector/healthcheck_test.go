@@ -213,8 +213,12 @@ func TestCheckNodeHealthClearsPrimaryOnDegradation(t *testing.T) {
 	}
 
 	// Previous primary should be saved for election drain check.
-	if srv.previousPrimary.NodeID != "node-a" {
-		t.Fatalf("expected previousPrimary=node-a, got %s", srv.previousPrimary.NodeID)
+	if pp := srv.previousPrimary.Load(); pp == nil || pp.NodeID != "node-a" {
+		nodeID := ""
+		if pp != nil {
+			nodeID = pp.NodeID
+		}
+		t.Fatalf("expected previousPrimary=node-a, got %s", nodeID)
 	}
 }
 
@@ -264,8 +268,12 @@ func TestCheckNodeHealthClearsPrimaryOnDeregistration(t *testing.T) {
 	}
 
 	// Previous primary should be saved.
-	if srv.previousPrimary.NodeID != "node-a" {
-		t.Fatalf("expected previousPrimary=node-a, got %s", srv.previousPrimary.NodeID)
+	if pp := srv.previousPrimary.Load(); pp == nil || pp.NodeID != "node-a" {
+		nodeID := ""
+		if pp != nil {
+			nodeID = pp.NodeID
+		}
+		t.Fatalf("expected previousPrimary=node-a, got %s", nodeID)
 	}
 }
 
@@ -302,7 +310,7 @@ func TestCheckNodeHealthDoesNotClearNonPrimary(t *testing.T) {
 	if cs.Primary.NodeID != "node-b" {
 		t.Fatalf("expected primary=node-b, got %s", cs.Primary.NodeID)
 	}
-	if srv.previousPrimary.NodeID != "" {
-		t.Fatalf("expected no previousPrimary, got %s", srv.previousPrimary.NodeID)
+	if pp := srv.previousPrimary.Load(); pp != nil && pp.NodeID != "" {
+		t.Fatalf("expected no previousPrimary, got %s", pp.NodeID)
 	}
 }

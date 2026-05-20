@@ -73,7 +73,7 @@ func (s *Server) runPrimaryElectionLoop(ctx context.Context) {
 			continue
 		}
 
-		s.previousPrimary = nodestate.NodeInfo{}
+		s.previousPrimary.Store(&nodestate.NodeInfo{})
 		s.pushClusterState(ctx, elected)
 
 		if s.metrics != nil {
@@ -158,17 +158,18 @@ type electionCandidate struct {
 // proceeds. It uses s.previousPrimary rather than ClusterState because
 // ClusterState.Primary is cleared before election starts.
 func (s *Server) checkPreviousPrimary(ctx context.Context) error {
-	if s.previousPrimary.NodeID == "" {
+	prev := s.previousPrimary.Load()
+	if prev == nil || prev.NodeID == "" {
 		return nil
 	}
 
 	// When the previous Primary is this node, check local state
 	// directly instead of making an RPC to self.
-	if s.previousPrimary.NodeID == s.localNodeID {
+	if prev.NodeID == s.localNodeID {
 		return s.checkLocalPreviousPrimary()
 	}
 
-	prevPrimary := s.previousPrimary
+	prevPrimary := *prev
 	s.logger.Info("checking previous primary",
 		"node_id", prevPrimary.NodeID,
 		"addr", prevPrimary.PeerAdvertiseAddr,
@@ -207,7 +208,7 @@ func (s *Server) checkPreviousPrimary(ctx context.Context) error {
 			s.logger.Info("previous primary confirmed replica",
 				"node_id", prevPrimary.NodeID,
 			)
-			s.previousPrimary = nodestate.NodeInfo{}
+			s.previousPrimary.Store(&nodestate.NodeInfo{})
 			return nil
 		case nodestate.PrimaryActive:
 			return fmt.Errorf("previous primary %s is still active", prevPrimary.NodeID)
@@ -238,7 +239,7 @@ func (s *Server) checkPreviousPrimary(ctx context.Context) error {
 		"node_id", prevPrimary.NodeID,
 		"timeout", timeout,
 	)
-	s.previousPrimary = nodestate.NodeInfo{}
+	s.previousPrimary.Store(&nodestate.NodeInfo{})
 	return nil
 }
 
@@ -254,7 +255,7 @@ func (s *Server) checkLocalPreviousPrimary() error {
 	switch ps {
 	case nodestate.PrimaryReplica:
 		s.logger.Info("local node confirmed replica")
-		s.previousPrimary = nodestate.NodeInfo{}
+		s.previousPrimary.Store(&nodestate.NodeInfo{})
 		return nil
 	case nodestate.PrimaryActive:
 		return fmt.Errorf("local node is still active primary")
@@ -263,7 +264,7 @@ func (s *Server) checkLocalPreviousPrimary() error {
 	case nodestate.PrimaryStarting:
 		return fmt.Errorf("local node is in starting state")
 	default:
-		s.previousPrimary = nodestate.NodeInfo{}
+		s.previousPrimary.Store(&nodestate.NodeInfo{})
 		return nil
 	}
 }

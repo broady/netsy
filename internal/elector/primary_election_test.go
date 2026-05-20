@@ -286,17 +286,17 @@ func TestElectPrimaryOnceNoRegisteredNodes(t *testing.T) {
 
 func TestCheckPreviousPrimaryLocalReplica(t *testing.T) {
 	srv := newElectionTestServer()
-	srv.previousPrimary = nodestate.NodeInfo{
+	srv.previousPrimary.Store(&nodestate.NodeInfo{
 		NodeID:            "node-a",
 		PeerAdvertiseAddr: "10.0.0.1:2381",
-	}
+	})
 	// Default Primary State is Replica.
 	err := srv.checkPreviousPrimary(context.Background())
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if srv.previousPrimary.NodeID != "" {
-		t.Fatalf("expected previousPrimary cleared, got %s", srv.previousPrimary.NodeID)
+	if pp := srv.previousPrimary.Load(); pp != nil && pp.NodeID != "" {
+		t.Fatalf("expected previousPrimary cleared, got %s", pp.NodeID)
 	}
 }
 
@@ -304,18 +304,22 @@ func TestCheckPreviousPrimaryLocalActive(t *testing.T) {
 	srv := newElectionTestServer()
 	_ = srv.state.SetPrimary(nodestate.PrimaryStarting)
 	_ = srv.state.SetPrimary(nodestate.PrimaryActive)
-	srv.previousPrimary = nodestate.NodeInfo{
+	srv.previousPrimary.Store(&nodestate.NodeInfo{
 		NodeID:            "node-a",
 		PeerAdvertiseAddr: "10.0.0.1:2381",
-	}
+	})
 
 	err := srv.checkPreviousPrimary(context.Background())
 	if err == nil {
 		t.Fatal("expected error when local node is still active primary")
 	}
 	// previousPrimary should NOT be cleared.
-	if srv.previousPrimary.NodeID != "node-a" {
-		t.Fatalf("expected previousPrimary preserved, got %s", srv.previousPrimary.NodeID)
+	if pp := srv.previousPrimary.Load(); pp == nil || pp.NodeID != "node-a" {
+		nodeID := ""
+		if pp != nil {
+			nodeID = pp.NodeID
+		}
+		t.Fatalf("expected previousPrimary preserved, got %s", nodeID)
 	}
 }
 
@@ -324,17 +328,21 @@ func TestCheckPreviousPrimaryLocalDraining(t *testing.T) {
 	_ = srv.state.SetPrimary(nodestate.PrimaryStarting)
 	_ = srv.state.SetPrimary(nodestate.PrimaryActive)
 	_ = srv.state.SetPrimary(nodestate.PrimaryDraining)
-	srv.previousPrimary = nodestate.NodeInfo{
+	srv.previousPrimary.Store(&nodestate.NodeInfo{
 		NodeID:            "node-a",
 		PeerAdvertiseAddr: "10.0.0.1:2381",
-	}
+	})
 
 	err := srv.checkPreviousPrimary(context.Background())
 	if err == nil {
 		t.Fatal("expected error when local node is still draining")
 	}
-	if srv.previousPrimary.NodeID != "node-a" {
-		t.Fatalf("expected previousPrimary preserved, got %s", srv.previousPrimary.NodeID)
+	if pp := srv.previousPrimary.Load(); pp == nil || pp.NodeID != "node-a" {
+		nodeID := ""
+		if pp != nil {
+			nodeID = pp.NodeID
+		}
+		t.Fatalf("expected previousPrimary preserved, got %s", nodeID)
 	}
 }
 
