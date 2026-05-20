@@ -44,6 +44,7 @@ type Watcher struct {
 	id int64
 	sync.RWMutex
 	client   pb.Watch_WatchServer // the gRPC stream
+	sendMu   sync.Mutex           // serializes all Send calls on the gRPC stream
 	inboxOk  bool
 	inboxCh  chan pb.WatchResponse
 	watches  map[int64]watchEntry
@@ -90,6 +91,15 @@ func (w *Watcher) Client() pb.Watch_WatchServer {
 // the watcher's dispatch goroutine.
 func (w *Watcher) InboxCh() <-chan pb.WatchResponse {
 	return w.inboxCh
+}
+
+// Send serializes writes to the gRPC stream. gRPC ServerStream.Send
+// is not safe for concurrent use; all callers must use this method
+// instead of calling w.client.Send directly.
+func (w *Watcher) Send(resp *pb.WatchResponse) error {
+	w.sendMu.Lock()
+	defer w.sendMu.Unlock()
+	return w.client.Send(resp)
 }
 
 // Cleanup closes the watcher inbox channel, cancels all watches, and
@@ -144,12 +154,12 @@ func (w *Watcher) CreateWatch(r *pb.WatchCreateRequest, latestRevision int64, co
 			"start_revision", r.StartRevision,
 			"compaction_revision", compactionRevision,
 		)
-		_ = w.client.Send(&pb.WatchResponse{
+		_ = w.Send(&pb.WatchResponse{
 			Header:  respHeader,
 			Created: true,
 			WatchId: watchID,
 		})
-		_ = w.client.Send(&pb.WatchResponse{
+		_ = w.Send(&pb.WatchResponse{
 			Header:          respHeader,
 			Canceled:        true,
 			CancelReason:    cancelReason,
@@ -162,12 +172,12 @@ func (w *Watcher) CreateWatch(r *pb.WatchCreateRequest, latestRevision int64, co
 	// do not support user-provided watch IDs
 	if r.WatchId != clientv3.AutoWatchID {
 		logger.Warn("user-provided watch IDs are unsupported", "watch_id", r.WatchId)
-		_ = w.client.Send(&pb.WatchResponse{
+		_ = w.Send(&pb.WatchResponse{
 			Header:  respHeader,
 			Created: true,
 			WatchId: r.WatchId,
 		})
-		_ = w.client.Send(&pb.WatchResponse{
+		_ = w.Send(&pb.WatchResponse{
 			Header:       respHeader,
 			Canceled:     true,
 			CancelReason: "user-provided watch IDs are unsupported",
@@ -208,12 +218,12 @@ func (w *Watcher) CreateWatch(r *pb.WatchCreateRequest, latestRevision int64, co
 		}
 		if cancelReason != "" {
 			logger.Debug("create watch failed", "reason", cancelReason, "start_revision", r.StartRevision)
-			_ = w.client.Send(&pb.WatchResponse{
+			_ = w.Send(&pb.WatchResponse{
 				Header:  respHeader,
 				Created: true,
 				WatchId: watchID,
 			})
-			_ = w.client.Send(&pb.WatchResponse{
+			_ = w.Send(&pb.WatchResponse{
 				Header:          respHeader,
 				Canceled:        true,
 				CancelReason:    cancelReason,
@@ -254,12 +264,12 @@ func (w *Watcher) CreateWatch(r *pb.WatchCreateRequest, latestRevision int64, co
 				"start_revision", r.StartRevision,
 				"compaction_revision", floor,
 			)
-			_ = w.client.Send(&pb.WatchResponse{
+			_ = w.Send(&pb.WatchResponse{
 				Header:  respHeader,
 				Created: true,
 				WatchId: watchID,
 			})
-			_ = w.client.Send(&pb.WatchResponse{
+			_ = w.Send(&pb.WatchResponse{
 				Header:          respHeader,
 				Canceled:        true,
 				CancelReason:    cancelReason,
@@ -275,7 +285,7 @@ func (w *Watcher) CreateWatch(r *pb.WatchCreateRequest, latestRevision int64, co
 	w.Unlock()
 
 	// acknowledge the watch create request to the client
-	if err := w.client.Send(&pb.WatchResponse{
+	if err := w.Send(&pb.WatchResponse{
 		Header:  respHeader,
 		Created: true,
 		WatchId: watchID,
@@ -309,7 +319,7 @@ func (w *Watcher) CancelWatch(watchID int64, revision int64, reason error, logge
 	if reason != nil {
 		reasonMsg = reason.Error()
 	}
-	err := w.client.Send(&pb.WatchResponse{
+	err := w.Send(&pb.WatchResponse{
 		Header: &pb.ResponseHeader{
 			Revision: revision,
 		},
