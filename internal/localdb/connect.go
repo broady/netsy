@@ -32,6 +32,17 @@ func (db *database) Connect() error {
 	}
 	db.conn = conn
 
+	// Set busy timeout so concurrent writers retry instead of failing immediately
+	// with SQLITE_BUSY. 5 seconds is enough for short write transactions.
+	if _, err := conn.Exec("PRAGMA busy_timeout=5000"); err != nil {
+		return fmt.Errorf("failed to set busy_timeout: %w", err)
+	}
+
+	// Bound the connection pool. WAL mode allows concurrent readers but
+	// only one writer; limiting connections prevents resource exhaustion.
+	conn.SetMaxOpenConns(4)
+	conn.SetMaxIdleConns(4)
+
 	// Enable WAL mode for better concurrency (allows reads during writes)
 	if _, err := conn.Exec("PRAGMA journal_mode=WAL"); err != nil {
 		return fmt.Errorf("failed to enable WAL mode: %w", err)
