@@ -39,6 +39,9 @@ func Range(db localdb.Database, ctx context.Context, r *pb.RangeRequest) (*pb.Ra
 	if r.Limit < 0 {
 		return nil, status.Errorf(codes.InvalidArgument, "limit must be non-negative")
 	}
+	if len(r.Key) == 0 {
+		return nil, status.Errorf(codes.InvalidArgument, "key must not be empty")
+	}
 
 	// determine query where criteria and args
 	// TODO: similar to watch.Go isInRange, consider refactor
@@ -59,7 +62,7 @@ func Range(db localdb.Database, ctx context.Context, r *pb.RangeRequest) (*pb.Ra
 		queryArgs = []any{r.Key}
 	} else if bytes.Equal(r.Key, zeroByte) && bytes.Equal(r.RangeEnd, zeroByte) {
 		// both keys are zero bytes, return all keys
-		// no WHERE
+		queryWhere = "1=1"
 	} else if bytes.Equal(r.RangeEnd, zeroByte) {
 		// rangeEnd is zero bytes, get all keys greater than or equal to r.Key
 		// key > r.Key
