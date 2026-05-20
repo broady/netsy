@@ -337,10 +337,19 @@ func (ps *Server) startObjectStorageRecovery(record *proto.Record, cause error) 
 	}
 
 	go func() {
+		// Snapshot the service lifecycle context so the goroutine is
+		// cancelled when StopServices is called.
+		ps.svcMu.Lock()
+		ctx := ps.svcCtx
+		ps.svcMu.Unlock()
+		if ctx == nil {
+			ctx = context.Background()
+		}
+
 		backoff := time.Second
 		for {
-			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-			err := ps.writeRecordIfMissing(ctx, record)
+			tctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+			err := ps.writeRecordIfMissing(tctx, record)
 			cancel()
 
 			if err == nil {
@@ -362,7 +371,14 @@ func (ps *Server) startObjectStorageRecovery(record *proto.Record, cause error) 
 				"error", err,
 			)
 
-			time.Sleep(backoff)
+			select {
+			case <-time.After(backoff):
+			case <-ctx.Done():
+				ps.logger.Warn("object storage recovery cancelled",
+					"revision", record.Revision,
+				)
+				return
+			}
 			if backoff < objectStorageRecoveryMaxBackoff {
 				backoff *= 2
 				if backoff > objectStorageRecoveryMaxBackoff {

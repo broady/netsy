@@ -48,6 +48,7 @@ type Server struct {
 	followStreams  map[string]*followSession
 
 	svcMu     sync.Mutex
+	svcCtx    context.Context
 	svcCancel context.CancelFunc
 
 	preflightMu     sync.Mutex
@@ -151,6 +152,7 @@ func (s *Server) StartServices(parent context.Context) {
 	}
 
 	ctx, cancel := context.WithCancel(parent)
+	s.svcCtx = ctx
 	s.svcCancel = cancel
 
 	go s.RunDegradationLoop(ctx)
@@ -174,6 +176,7 @@ func (s *Server) StopServices() {
 
 	s.svcCancel()
 	s.svcCancel = nil
+	s.svcCtx = nil
 	s.resetFollowStreams()
 	s.replicas.Reset()
 	s.logger.Info("primary services stopped")
