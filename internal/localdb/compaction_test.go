@@ -108,82 +108,370 @@ func TestPersistCompactionRevisionIdempotent(t *testing.T) {
 }
 
 func TestExecuteCompaction(t *testing.T) {
-	db := openTestDB(t)
-
-	insertReplicated(t, db, &proto.Record{
-		Revision:       1,
-		Key:            []byte("a"),
-		Created:        true,
-		Version:        1,
-		CreateRevision: 1,
-		CreatedAt:      timestamppb.New(time.Unix(1, 0).UTC()),
-		LeaderId:       "leader-1",
-		Value:          []byte("val-a"),
-	})
-	insertReplicated(t, db, &proto.Record{
-		Revision:       2,
-		Key:            []byte("b"),
-		Created:        true,
-		Version:        1,
-		CreateRevision: 2,
-		CreatedAt:      timestamppb.New(time.Unix(2, 0).UTC()),
-		LeaderId:       "leader-1",
-		Value:          []byte("val-b"),
-	})
-	insertReplicated(t, db, &proto.Record{
-		Revision:       3,
-		Key:            []byte("c"),
-		Created:        true,
-		Version:        1,
-		CreateRevision: 3,
-		CreatedAt:      timestamppb.New(time.Unix(3, 0).UTC()),
-		LeaderId:       "leader-1",
-		Value:          []byte("val-c"),
-	})
-
-	// Compaction revision is inclusive (matching etcd): revision 2
-	// means revisions 1 and 2 are compacted, revision 3 is preserved.
-	affected, err := db.ExecuteCompaction(2)
-	if err != nil {
-		t.Fatalf("ExecuteCompaction(2) error = %v", err)
-	}
-	if affected != 2 {
-		t.Fatalf("ExecuteCompaction(2) affected = %d, want 2", affected)
+	type compactionRecord struct {
+		*proto.Record
+		expectCompaction bool
 	}
 
-	// Verify revisions 1 and 2 have NULL values and compacted_at set.
-	for _, rev := range []int64{1, 2} {
-		record, err := db.FindRecordByRev(rev)
-		if err != nil {
-			t.Fatalf("FindRecordByRev(%d) error = %v", rev, err)
-		}
-		if record.Value != nil {
-			t.Fatalf("revision %d value = %v, want nil", rev, record.Value)
-		}
-		if record.CompactedAt == nil {
-			t.Fatalf("revision %d compacted_at is nil, want set", rev)
-		}
+	tests := []struct {
+		name               string
+		compactionRevision int64
+		records            []compactionRecord
+	}{
+		{
+			name:               "mixed records",
+			compactionRevision: 4,
+			records: []compactionRecord{
+				{
+					Record: &proto.Record{
+						Revision:       1,
+						Key:            []byte("a"),
+						Created:        true,
+						Version:        1,
+						CreateRevision: 1,
+						PrevRevision:   0,
+						CreatedAt:      timestamppb.New(time.Unix(1, 0).UTC()),
+						LeaderId:       "leader-1",
+						Value:          []byte("val-a"),
+					},
+					expectCompaction: true,
+				},
+				{
+					Record: &proto.Record{
+						Revision:       2,
+						Key:            []byte("a"),
+						Version:        2,
+						CreateRevision: 1,
+						PrevRevision:   1,
+						CreatedAt:      timestamppb.New(time.Unix(2, 0).UTC()),
+						LeaderId:       "leader-1",
+						Value:          []byte("val-a2"),
+					},
+					expectCompaction: true,
+				},
+				{
+					Record: &proto.Record{
+						Revision:       3,
+						Key:            []byte("d"),
+						Created:        true,
+						Version:        1,
+						CreateRevision: 3,
+						PrevRevision:   0,
+						CreatedAt:      timestamppb.New(time.Unix(3, 0).UTC()),
+						LeaderId:       "leader-1",
+						Value:          []byte("val-d"),
+					},
+					expectCompaction: true,
+				},
+				{
+					Record: &proto.Record{
+						Revision:       4,
+						Key:            []byte("d"),
+						Deleted:        true,
+						Version:        2,
+						CreateRevision: 3,
+						PrevRevision:   3,
+						CreatedAt:      timestamppb.New(time.Unix(4, 0).UTC()),
+						LeaderId:       "leader-1",
+					},
+					expectCompaction: true,
+				},
+				{
+					Record: &proto.Record{
+						Revision:       5,
+						Key:            []byte("b"),
+						Created:        true,
+						Version:        1,
+						CreateRevision: 5,
+						PrevRevision:   0,
+						CreatedAt:      timestamppb.New(time.Unix(5, 0).UTC()),
+						LeaderId:       "leader-1",
+						Value:          []byte("val-b"),
+					},
+				},
+				{
+					Record: &proto.Record{
+						Revision:       6,
+						Key:            []byte("c"),
+						Created:        true,
+						Version:        1,
+						CreateRevision: 6,
+						PrevRevision:   0,
+						CreatedAt:      timestamppb.New(time.Unix(6, 0).UTC()),
+						LeaderId:       "leader-1",
+						Value:          []byte("val-c"),
+					},
+				},
+				{
+					Record: &proto.Record{
+						Revision:       7,
+						Key:            []byte("a"),
+						Version:        3,
+						CreateRevision: 1,
+						PrevRevision:   2,
+						CreatedAt:      timestamppb.New(time.Unix(7, 0).UTC()),
+						LeaderId:       "leader-1",
+						Value:          []byte("val-a3"),
+					},
+				},
+			},
+		},
+		{
+			name:               "tombstone compacted when key is recreated after deletion",
+			compactionRevision: 10,
+			records: []compactionRecord{
+				{
+					Record: &proto.Record{
+						Revision:       1,
+						Key:            []byte("a"),
+						Created:        true,
+						Version:        1,
+						CreateRevision: 1,
+						PrevRevision:   0,
+						CreatedAt:      timestamppb.New(time.Unix(1, 0).UTC()),
+						LeaderId:       "leader-1",
+						Value:          []byte("hello"),
+					},
+					expectCompaction: true,
+				},
+				{
+					Record: &proto.Record{
+						Revision:       5,
+						Key:            []byte("a"),
+						Deleted:        true,
+						Version:        2,
+						CreateRevision: 1,
+						PrevRevision:   1,
+						CreatedAt:      timestamppb.New(time.Unix(5, 0).UTC()),
+						LeaderId:       "leader-1",
+					},
+					expectCompaction: true,
+				},
+				{
+					Record: &proto.Record{
+						Revision:       11,
+						Key:            []byte("a"),
+						Created:        true,
+						Version:        1,
+						CreateRevision: 11,
+						PrevRevision:   5,
+						CreatedAt:      timestamppb.New(time.Unix(11, 0).UTC()),
+						LeaderId:       "leader-1",
+						Value:          []byte("b"),
+					},
+				},
+			},
+		},
+		{
+			name:               "latest tombstone compacted",
+			compactionRevision: 10,
+			records: []compactionRecord{
+				{
+					Record: &proto.Record{
+						Revision:       1,
+						Key:            []byte("a"),
+						Created:        true,
+						Version:        1,
+						CreateRevision: 1,
+						PrevRevision:   0,
+						CreatedAt:      timestamppb.New(time.Unix(1, 0).UTC()),
+						LeaderId:       "leader-1",
+						Value:          []byte("hello"),
+					},
+					expectCompaction: true,
+				},
+				{
+					Record: &proto.Record{
+						Revision:       5,
+						Key:            []byte("a"),
+						Deleted:        true,
+						Version:        2,
+						CreateRevision: 1,
+						PrevRevision:   1,
+						CreatedAt:      timestamppb.New(time.Unix(5, 0).UTC()),
+						LeaderId:       "leader-1",
+					},
+					expectCompaction: true,
+				},
+			},
+		},
+		{
+			name:               "value compacted when deleted after compaction revision",
+			compactionRevision: 10,
+			records: []compactionRecord{
+				{
+					Record: &proto.Record{
+						Revision:       5,
+						Key:            []byte("a"),
+						Created:        true,
+						Version:        1,
+						CreateRevision: 5,
+						PrevRevision:   0,
+						CreatedAt:      timestamppb.New(time.Unix(5, 0).UTC()),
+						LeaderId:       "leader-1",
+						Value:          []byte("hello"),
+					},
+					expectCompaction: true,
+				},
+				{
+					Record: &proto.Record{
+						Revision:       11,
+						Key:            []byte("a"),
+						Deleted:        true,
+						Version:        2,
+						CreateRevision: 5,
+						PrevRevision:   5,
+						CreatedAt:      timestamppb.New(time.Unix(11, 0).UTC()),
+						LeaderId:       "leader-1",
+					},
+				},
+			},
+		},
+		{
+			name:               "latest value before compaction revision preserved",
+			compactionRevision: 10,
+			records: []compactionRecord{
+				{
+					Record: &proto.Record{
+						Revision:       5,
+						Key:            []byte("a"),
+						Created:        true,
+						Version:        1,
+						CreateRevision: 5,
+						PrevRevision:   0,
+						CreatedAt:      timestamppb.New(time.Unix(5, 0).UTC()),
+						LeaderId:       "leader-1",
+						Value:          []byte("hello"),
+					},
+				},
+			},
+		},
+		{
+			name:               "newer record for different key does not compact value",
+			compactionRevision: 10,
+			records: []compactionRecord{
+				{
+					Record: &proto.Record{
+						Revision:       5,
+						Key:            []byte("a"),
+						Created:        true,
+						Version:        1,
+						CreateRevision: 5,
+						PrevRevision:   0,
+						CreatedAt:      timestamppb.New(time.Unix(5, 0).UTC()),
+						LeaderId:       "leader-1",
+						Value:          []byte("hello"),
+					},
+				},
+				{
+					Record: &proto.Record{
+						Revision:       11,
+						Key:            []byte("b"),
+						Created:        true,
+						Version:        1,
+						CreateRevision: 11,
+						PrevRevision:   0,
+						CreatedAt:      timestamppb.New(time.Unix(11, 0).UTC()),
+						LeaderId:       "leader-1",
+						Value:          []byte("world"),
+					},
+				},
+			},
+		},
+		{
+			name:               "value at compaction revision compacted when superseded later",
+			compactionRevision: 10,
+			records: []compactionRecord{
+				{
+					Record: &proto.Record{
+						Revision:       10,
+						Key:            []byte("a"),
+						Created:        true,
+						Version:        1,
+						CreateRevision: 10,
+						PrevRevision:   0,
+						CreatedAt:      timestamppb.New(time.Unix(10, 0).UTC()),
+						LeaderId:       "leader-1",
+						Value:          []byte("hello"),
+					},
+					expectCompaction: true,
+				},
+				{
+					Record: &proto.Record{
+						Revision:       11,
+						Key:            []byte("a"),
+						Version:        2,
+						CreateRevision: 10,
+						PrevRevision:   10,
+						CreatedAt:      timestamppb.New(time.Unix(11, 0).UTC()),
+						LeaderId:       "leader-1",
+						Value:          []byte("world"),
+					},
+				},
+			},
+		},
 	}
 
-	// Verify revision 3 is untouched.
-	record, err := db.FindRecordByRev(3)
-	if err != nil {
-		t.Fatalf("FindRecordByRev(3) error = %v", err)
-	}
-	if string(record.Value) != "val-c" {
-		t.Fatalf("revision 3 value = %q, want %q", record.Value, "val-c")
-	}
-	if record.CompactedAt != nil {
-		t.Fatalf("revision 3 compacted_at = %v, want nil", record.CompactedAt)
-	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			db := openTestDB(t)
 
-	// Running again should be idempotent (0 affected).
-	affected, err = db.ExecuteCompaction(2)
-	if err != nil {
-		t.Fatalf("ExecuteCompaction(2) second call error = %v", err)
-	}
-	if affected != 0 {
-		t.Fatalf("ExecuteCompaction(2) second call affected = %d, want 0", affected)
+			var wantAffected int64
+			for _, test := range tt.records {
+				insertReplicated(t, db, test.Record)
+				if test.expectCompaction {
+					wantAffected++
+				}
+			}
+
+			affected, err := db.ExecuteCompaction(tt.compactionRevision)
+			if err != nil {
+				t.Fatalf("ExecuteCompaction(%d) error = %v", tt.compactionRevision, err)
+			}
+			if affected != wantAffected {
+				t.Fatalf("ExecuteCompaction(%d) affected = %d, want %d", tt.compactionRevision, affected, wantAffected)
+			}
+
+			for _, test := range tt.records {
+				record, err := db.FindRecordByRev(test.Revision)
+				if err != nil {
+					t.Fatalf("FindRecordByRev(%d) error = %v", test.Revision, err)
+				}
+				if test.expectCompaction {
+					if record.Value != nil {
+						t.Fatalf("revision %d value = %v, want nil", test.Revision, record.Value)
+					}
+					if record.CompactedAt == nil {
+						t.Fatalf("revision %d compacted_at is nil, want set", test.Revision)
+					}
+				} else {
+					if string(record.Value) != string(test.Value) {
+						t.Fatalf("revision %d value = %q, want %q", test.Revision, record.Value, test.Value)
+					}
+					if record.CompactedAt != nil {
+						t.Fatalf("revision %d compacted_at = %v, want nil", test.Revision, record.CompactedAt)
+					}
+				}
+				if record.Version != test.Version {
+					t.Fatalf("revision %d version = %d, want %d", test.Revision, record.Version, test.Version)
+				}
+				if record.CreateRevision != test.CreateRevision {
+					t.Fatalf("revision %d create_revision = %d, want %d", test.Revision, record.CreateRevision, test.CreateRevision)
+				}
+				if record.PrevRevision != test.PrevRevision {
+					t.Fatalf("revision %d prev_revision = %d, want %d", test.Revision, record.PrevRevision, test.PrevRevision)
+				}
+			}
+
+			// Running again should be idempotent (0 affected).
+			affected, err = db.ExecuteCompaction(tt.compactionRevision)
+			if err != nil {
+				t.Fatalf("ExecuteCompaction(%d) second call error = %v", tt.compactionRevision, err)
+			}
+			if affected != 0 {
+				t.Fatalf("ExecuteCompaction(%d) second call affected = %d, want 0", tt.compactionRevision, affected)
+			}
+		})
 	}
 }
 
