@@ -55,7 +55,7 @@ func selectTxnStrategy(quorum int, nodeCount int, healthyForQuorum int) txnStrat
 }
 
 // receiptCollector tracks Receipts for a single in-flight quorum
-// transaction. Because leaderTxnMutex serializes all writes, at most one
+// transaction. Because leaderTxnGate serializes all writes, at most one
 // receiptCollector is active at any time.
 type receiptCollector struct {
 	revision int64

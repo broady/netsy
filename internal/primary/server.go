@@ -65,16 +65,17 @@ type Server struct {
 
 	lastWritePath string
 
-	// leaderTxnMutex serializes all transaction processing on the leader node.
-	// This mutex should ONLY be used by the leader, not by follower nodes.
-	leaderTxnMutex sync.Mutex
+	// leaderTxnGate serializes admission to the Primary write path.
+	// It is a channel, rather than a mutex, so requests can stop waiting when
+	// their client context is canceled.
+	leaderTxnGate chan struct{}
 
 	// nextRevisionID holds the next revision ID to assign.
 	// Managed atomically to ensure thread-safe access.
 	nextRevisionID atomic.Int64
 
 	// receiptCollector is non-nil when a quorum transaction is waiting for
-	// Receipts. At most one is active at a time because leaderTxnMutex
+	// Receipts. At most one is active at a time because leaderTxnGate
 	// serializes all writes. receiptCollectorMu guards the active receipt
 	// collector.
 	receiptCollector   *receiptCollector
@@ -114,6 +115,7 @@ func NewServer(
 		compactionMetrics:    compactionMetrics,
 		retryMetrics:         retryMetrics,
 		storageMetrics:       storageMetrics,
+		leaderTxnGate:        make(chan struct{}, 1),
 		quorumReceiptTimeout: defaultQuorumReceiptTimeout,
 		chunkBuffer: newChunkBuffer(
 			logger,

@@ -9,6 +9,7 @@ import (
 	"io"
 	"log/slog"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -1344,6 +1345,7 @@ func TestAmbiguousCommitTransitionsToDraining(t *testing.T) {
 		state:                state,
 		replicas:             NewReplicas(),
 		followStreams:        make(map[string]*followSession),
+		leaderTxnGate:        make(chan struct{}, 1),
 		quorumReceiptTimeout: time.Second,
 	}
 	srv.chunkBuffer = newChunkBuffer(slog.Default(), state, store, cfg.NodeID, 0, 0, nil)
@@ -1420,6 +1422,7 @@ func TestLeaderTxnObjectStorageWriteIgnoresClientCancellation(t *testing.T) {
 		state:                state,
 		replicas:             NewReplicas(),
 		followStreams:        make(map[string]*followSession),
+		leaderTxnGate:        make(chan struct{}, 1),
 		quorumReceiptTimeout: time.Second,
 	}
 	srv.chunkBuffer = newChunkBuffer(slog.Default(), state, store, cfg.NodeID, 0, 0, nil)
@@ -1433,6 +1436,85 @@ func TestLeaderTxnObjectStorageWriteIgnoresClientCancellation(t *testing.T) {
 	}
 	if state.Primary() != nodestate.PrimaryActive {
 		t.Fatalf("Primary state = %s, want Active", state.Primary())
+	}
+}
+
+func TestLeaderTxnContextCanceledBeforeAdmissionDoesNotWrite(t *testing.T) {
+	state := nodestate.New(slog.Default())
+	if err := state.SetPrimary(nodestate.PrimaryStarting); err != nil {
+		t.Fatalf("SetPrimary(Starting) error = %v", err)
+	}
+	if err := state.SetPrimary(nodestate.PrimaryActive); err != nil {
+		t.Fatalf("SetPrimary(Active) error = %v", err)
+	}
+
+	store := &blockingPutStore{
+		MemoryStore: storage.NewMemoryStore(),
+		entered:     make(chan struct{}),
+		release:     make(chan struct{}),
+	}
+	cfg := &config.Config{
+		NodeConfig: config.NodeConfig{
+			NodeID:  "node-a",
+			DataDir: t.TempDir(),
+		},
+		ClusterConfig: config.ClusterConfig{
+			Replication: config.ReplicationConfig{
+				Quorum:      intPtr(0),
+				ChunkBuffer: config.ChunkBufferConfig{},
+			},
+		},
+	}
+	db := openPrimaryTestDB(t)
+	srv := &Server{
+		logger:               slog.Default(),
+		config:               cfg,
+		db:                   db,
+		storageClient:        store,
+		state:                state,
+		replicas:             NewReplicas(),
+		followStreams:        make(map[string]*followSession),
+		leaderTxnGate:        make(chan struct{}, 1),
+		quorumReceiptTimeout: time.Second,
+	}
+	srv.chunkBuffer = newChunkBuffer(slog.Default(), state, store, cfg.NodeID, 0, 0, nil)
+	if err := srv.initializeRevisionCounter(); err != nil {
+		t.Fatalf("initializeRevisionCounter() error = %v", err)
+	}
+
+	firstDone := make(chan error, 1)
+	go func() {
+		_, _, err := srv.LeaderTxn(context.Background(), createTxnRequest("key-1", "value-1", 0))
+		firstDone <- err
+	}()
+
+	select {
+	case <-store.entered:
+	case <-time.After(time.Second):
+		t.Fatal("first write did not reach object storage")
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	_, _, err := srv.LeaderTxn(ctx, createTxnRequest("key-2", "value-2", 0))
+	if err == nil {
+		t.Fatal("LeaderTxn() error = nil, want context cancellation")
+	}
+	if err != context.Canceled {
+		t.Fatalf("LeaderTxn() error = %v, want %v", err, context.Canceled)
+	}
+
+	close(store.release)
+	if err := <-firstDone; err != nil {
+		t.Fatalf("first LeaderTxn() error = %v", err)
+	}
+
+	count, err := db.RecordCount()
+	if err != nil {
+		t.Fatalf("RecordCount() error = %v", err)
+	}
+	if count != 1 {
+		t.Fatalf("RecordCount() = %d, want 1", count)
 	}
 }
 
@@ -1452,6 +1534,25 @@ func (s *cancelDuringPutStore) PutIfMatch(ctx context.Context, key string, data 
 }
 
 func (s *cancelDuringPutStore) PutStream(ctx context.Context, key string, r io.Reader, size int64) error {
+	return s.MemoryStore.PutStream(ctx, key, r, size)
+}
+
+type blockingPutStore struct {
+	*storage.MemoryStore
+	once    sync.Once
+	entered chan struct{}
+	release chan struct{}
+}
+
+func (s *blockingPutStore) PutIfMatch(ctx context.Context, key string, data []byte, etag string) error {
+	s.once.Do(func() {
+		close(s.entered)
+		<-s.release
+	})
+	return s.MemoryStore.PutIfMatch(ctx, key, data, etag)
+}
+
+func (s *blockingPutStore) PutStream(ctx context.Context, key string, r io.Reader, size int64) error {
 	return s.MemoryStore.PutStream(ctx, key, r, size)
 }
 

@@ -222,6 +222,7 @@ func TestQuorumRollbackAndRetryViaPath1(t *testing.T) {
 		state:                state,
 		replicas:             NewReplicas(),
 		followStreams:        make(map[string]*followSession),
+		leaderTxnGate:        make(chan struct{}, 1),
 		quorumReceiptTimeout: 10 * time.Millisecond,
 	}
 	srv.chunkBuffer = newChunkBuffer(slog.Default(), state, store, cfg.NodeID, 0, 0, nil)

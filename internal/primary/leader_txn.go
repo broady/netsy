@@ -66,9 +66,14 @@ func (ps *Server) LeaderTxn(ctx context.Context, r *pb.TxnRequest) (record *prot
 	if err := ps.requireActivePrimary(); err != nil {
 		return nil, nil, err
 	}
-	// Serialize all leader transaction processing
-	ps.leaderTxnMutex.Lock()
-	defer ps.leaderTxnMutex.Unlock()
+	// Serialize all leader transaction processing, but do not admit work whose
+	// client request has already timed out while waiting behind another write.
+	select {
+	case ps.leaderTxnGate <- struct{}{}:
+		defer func() { <-ps.leaderTxnGate }()
+	case <-ctx.Done():
+		return nil, nil, ctx.Err()
+	}
 	// Validate and parse request
 	record, err = ParseTxnRequest(r)
 	if errors.Is(err, ErrUnsupported) {

@@ -22,6 +22,7 @@ func newTestServer(t *testing.T, state *nodestate.State, heartbeatInterval time.
 		state:             state,
 		replicas:          NewReplicas(),
 		followStreams:     make(map[string]*followSession),
+		leaderTxnGate:     make(chan struct{}, 1),
 		heartbeatInterval: heartbeatInterval,
 		degradationCount:  degradationCount,
 	}
