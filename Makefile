@@ -13,8 +13,8 @@ BUILDVARS_PKG=github.com/netsy-dev/netsy/internal/buildvars
 
 CURRENT := $(dir $(abspath $(lastword $(MAKEFILE_LIST))))
 
-# version format: YYYYMMDDhhmmss
-BUILD_VERSION=$(shell date -u '+%Y%m%d%H%M%S')
+VERSION_TAG=$(shell if git diff --quiet && git diff --cached --quiet; then git describe --tags --exact-match 2>/dev/null; fi)
+BUILD_VERSION=$(if $(VERSION_TAG),$(VERSION_TAG),dev)
 BUILD_DATE=$(shell date -u '+%Y-%m-%dT%H:%M:%S')
 COMMIT_HASH=$(shell git rev-parse --short HEAD)
 COMMIT_DATE=$(shell git log -1 --format=%cd --date=format:'%Y-%m-%dT%H:%M:%S')

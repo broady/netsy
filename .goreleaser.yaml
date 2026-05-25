@@ -21,7 +21,7 @@ builds:
 
     ldflags:
       - -s -w
-      - -X github.com/netsy-dev/netsy/internal/buildvars.buildVersion={{ .Version }}
+      - -X github.com/netsy-dev/netsy/internal/buildvars.buildVersion={{ .Tag }}
       - -X github.com/netsy-dev/netsy/internal/buildvars.buildDate={{ .Date }}
       - -X github.com/netsy-dev/netsy/internal/buildvars.commitHash={{ .ShortCommit }}
       - -X github.com/netsy-dev/netsy/internal/buildvars.commitDate={{ .CommitDate }}
