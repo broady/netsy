@@ -175,12 +175,17 @@ func (ps *Server) LeaderTxn(ctx context.Context, r *pb.TxnRequest) (record *prot
 	return inserted, resp, nil
 }
 
-// executeObjectStorageTxn commits a transaction via synchronous object
-// storage write (Path 1). the underlying writeRecord invocation retries
-// once on failure; if both attempts fail, the SQLite transaction is
-// rolled back and the object storage recovery sequence begins.
+// executeObjectStorageTxn commits a transaction via synchronous object storage
+// write (Path 1). It intentionally uses its own bounded context for the
+// durable write instead of the caller's context: once the Primary has
+// accepted a write, client cancellation only means the client stopped waiting,
+// not that the commit protocol should abort. The underlying writeRecord
+// invocation retries once on failure; if both attempts fail, the SQLite
+// transaction is rolled back and the object storage recovery sequence begins.
 func (ps *Server) executeObjectStorageTxn(ctx context.Context, tx *localdb.Tx, record *proto.Record) error {
-	err := ps.writeRecord(ctx, record)
+	writeCtx, cancel := context.WithTimeout(context.Background(), objectStorageWriteTimeout)
+	defer cancel()
+	err := ps.writeRecord(writeCtx, record)
 	if err != nil {
 		_ = tx.Rollback()
 		ps.startObjectStorageRecovery(record, err)
@@ -297,6 +302,13 @@ func (ps *Server) executeQuorumTxn(ctx context.Context, tx *localdb.Tx, record *
 	ps.checkAndCreateSnapshot(record.Revision, recordSize)
 	return nil
 }
+
+// objectStorageWriteTimeout bounds the synchronous object storage write that
+// makes a transaction durable. It intentionally does not use the client RPC
+// context; once the Primary has admitted a write it must not demote itself just
+// because the caller disconnected or timed out while the durable write was in
+// progress.
+const objectStorageWriteTimeout = 10 * time.Second
 
 // objectStorageRecoveryMaxBackoff caps the exponential backoff for object
 // storage recovery retries.

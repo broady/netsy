@@ -6,6 +6,7 @@ package primary
 
 import (
 	"context"
+	"io"
 	"log/slog"
 	"strings"
 	"testing"
@@ -1381,6 +1382,77 @@ func TestAmbiguousCommitTransitionsToDraining(t *testing.T) {
 	if !strings.Contains(err.Error(), "not accepting writes") {
 		t.Fatalf("expected write rejection error, got: %v", err)
 	}
+}
+
+// TestLeaderTxnObjectStorageWriteIgnoresClientCancellation verifies that the
+// synchronous object storage write uses a server-owned context instead of the
+// client RPC context. If the client cancels while the Primary is committing a
+// transaction, the Primary must still finish the durable write instead of
+// treating it as failed and demoting itself.
+func TestLeaderTxnObjectStorageWriteIgnoresClientCancellation(t *testing.T) {
+	state := nodestate.New(slog.Default())
+	if err := state.SetPrimary(nodestate.PrimaryStarting); err != nil {
+		t.Fatalf("SetPrimary(Starting) error = %v", err)
+	}
+	if err := state.SetPrimary(nodestate.PrimaryActive); err != nil {
+		t.Fatalf("SetPrimary(Active) error = %v", err)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	store := &cancelDuringPutStore{MemoryStore: storage.NewMemoryStore(), cancel: cancel}
+	cfg := &config.Config{
+		NodeConfig: config.NodeConfig{
+			NodeID:  "node-a",
+			DataDir: t.TempDir(),
+		},
+		ClusterConfig: config.ClusterConfig{
+			Replication: config.ReplicationConfig{
+				Quorum:      intPtr(0),
+				ChunkBuffer: config.ChunkBufferConfig{},
+			},
+		},
+	}
+	srv := &Server{
+		logger:               slog.Default(),
+		config:               cfg,
+		db:                   openPrimaryTestDB(t),
+		storageClient:        store,
+		state:                state,
+		replicas:             NewReplicas(),
+		followStreams:        make(map[string]*followSession),
+		quorumReceiptTimeout: time.Second,
+	}
+	srv.chunkBuffer = newChunkBuffer(slog.Default(), state, store, cfg.NodeID, 0, 0, nil)
+	if err := srv.initializeRevisionCounter(); err != nil {
+		t.Fatalf("initializeRevisionCounter() error = %v", err)
+	}
+
+	_, _, err := srv.LeaderTxn(ctx, createTxnRequest("key-1", "value-1", 0))
+	if err != nil {
+		t.Fatalf("LeaderTxn() error = %v", err)
+	}
+	if state.Primary() != nodestate.PrimaryActive {
+		t.Fatalf("Primary state = %s, want Active", state.Primary())
+	}
+}
+
+type cancelDuringPutStore struct {
+	*storage.MemoryStore
+	cancel context.CancelFunc
+}
+
+func (s *cancelDuringPutStore) PutIfMatch(ctx context.Context, key string, data []byte, etag string) error {
+	s.cancel()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-time.After(10 * time.Millisecond):
+		return s.MemoryStore.PutIfMatch(ctx, key, data, etag)
+	}
+}
+
+func (s *cancelDuringPutStore) PutStream(ctx context.Context, key string, r io.Reader, size int64) error {
+	return s.MemoryStore.PutStream(ctx, key, r, size)
 }
 
 // createTxnRequest builds a valid etcd-compatible create TxnRequest.
