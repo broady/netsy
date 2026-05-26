@@ -127,7 +127,7 @@ endef
 start: ## Start development environment (NETSY_COUNT=1 by default)
 	@./scripts/dev/check-ports.sh $(NETSY_COUNT)
 	@test -f temp/certs/ca.crt || ./scripts/dev/certs.sh $(NETSY_COUNT)
-	@if [ "$(NETSY_COUNT)" -gt 1 ]; then $(MAKE) build; fi
+	@if [ "$(NETSY_COUNT)" -gt 1 ] || [ "$(NETSY_DEV_AIR)" = "0" ]; then $(MAKE) build; fi
 	$(archive-logs)
 	OVERMIND_FORMATION=s3=1,netsy=$(NETSY_COUNT) overmind start -D
 	@echo "Development environment started. Use 'make tail' to view logs."

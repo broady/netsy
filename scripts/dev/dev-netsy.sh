@@ -103,13 +103,15 @@ if [ -n "${OVERMIND_FORMATION:-}" ]; then
 fi
 
 # ---------------------------------------------------------------------------
-# Runtime mode: air (single-instance) or direct-run loop (multi-instance)
+# Runtime mode: Air (single-instance default) or direct-run loop
 # ---------------------------------------------------------------------------
-if [ "${INSTANCE_COUNT}" -le 1 ]; then
+if [ "${INSTANCE_COUNT}" -le 1 ] && [ "${NETSY_DEV_AIR:-1}" != "0" ]; then
     # Single-instance: use Air for hot reload
     exec air -c "${ROOT}/scripts/dev/.air.toml" 2>&1 | tee "${LOG_FILE}"
 else
-    # Multi-instance: run the binary directly in a restart loop.
+    # Run the binary directly in a restart loop. This is the default for
+    # multi-instance dev clusters, and can be forced for a single instance
+    # with NETSY_DEV_AIR=0 make start.
     # Use 'make build' before starting, and 'make restart' to pick up changes.
     BINARY="${ROOT}/bin/netsy"
     if [ ! -f "${BINARY}" ]; then
