@@ -21,6 +21,10 @@ import (
 
 var ErrUnsupported = errors.New("Unsupported request - netsy only implementes the Kubernetes etcd API subet")
 
+// ErrInvalidTxnRequest is returned when a Txn request is malformed or outside
+// the supported request shapes.
+var ErrInvalidTxnRequest = errors.New("invalid txn request")
+
 // errQuorumNotMet is returned to the client when a quorum transaction
 // fails to collect enough Receipts within the timeout.
 var errQuorumNotMet = errors.New("quorum not met: insufficient replica receipts within timeout")
@@ -79,7 +83,7 @@ func (ps *Server) LeaderTxn(ctx context.Context, r *pb.TxnRequest) (record *prot
 	if errors.Is(err, ErrUnsupported) {
 		return nil, nil, fmt.Errorf("%w - request: %+v", err, r)
 	} else if err != nil {
-		return nil, nil, fmt.Errorf("error parsing request: %w", err)
+		return nil, nil, fmt.Errorf("%w: %v", ErrInvalidTxnRequest, err)
 	}
 	// Use the instance ID from config as the leader ID
 	record.LeaderId = ps.config.NodeID

@@ -80,8 +80,14 @@ func (cs *ClientAPIServer) ApplyTxn(ctx context.Context, r *pb.TxnRequest) (resp
 			} else {
 				cs.logger.Info("txn error", "txnerror", err.Error())
 			}
-		} else {
+		} else if errors.Is(err, primary.ErrInvalidTxnRequest) || errors.Is(err, primary.ErrUnsupported) {
+			// client request is invalid
 			cs.logger.Error("txn error", "txnerror", err.Error())
+			return nil, status.Error(codes.InvalidArgument, err.Error())
+		} else {
+			// internal failure
+			cs.logger.Error("txn error", "txnerror", err.Error())
+			return nil, status.Error(codes.Internal, err.Error())
 		}
 		// Best-effort latest revision retrieval
 		// If this fails we still want to return a well formed error
