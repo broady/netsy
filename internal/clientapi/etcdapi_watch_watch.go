@@ -78,14 +78,42 @@ func (cs *ClientAPIServer) Watch(ws pb.Watch_WatchServer) error {
 
 	// block until gRPC stream is closed
 	var err error
+	recvCh := make(chan *pb.WatchRequest)
+	recvErrCh := make(chan error, 1)
+	// Recv runs separately so server-side watcher shutdown can return from Watch
+	// while Recv is blocked on the client stream. The goroutine exits when the
+	// client disconnects or gRPC tears down the stream after Watch returns.
+	go func() {
+		for {
+			// wait for next message or error from gRPC stream
+			msg, recvErr := w.Client().Recv()
+			if recvErr != nil {
+				recvErrCh <- recvErr
+				return
+			}
+			select {
+			case recvCh <- msg:
+			case <-w.Done():
+				return
+			}
+		}
+	}()
+watchLoop:
 	for {
-		// wait for next message or error from gRPC stream
 		var msg *pb.WatchRequest
-		msg, err = w.Client().Recv()
-		if err != nil {
+		// wait for the next client request, client-side stream close, or
+		// server-side watcher close caused by a slow inbox.
+		select {
+		case msg = <-recvCh:
+		case err = <-recvErrCh:
 			cs.logger.Debug("watch stream closed", "watcher_id", watcherID)
-			// end watch/exit loop when the stream has an error/is closed
-			break
+			break watchLoop
+		case <-w.Done():
+			cs.logger.Debug("watch stream closed by server", "watcher_id", watcherID)
+			break watchLoop
+		}
+		if msg == nil {
+			continue
 		}
 		if cr := msg.GetCreateRequest(); cr != nil {
 			// handle watch create request

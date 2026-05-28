@@ -46,7 +46,10 @@ type Watcher struct {
 	client   pb.Watch_WatchServer // the gRPC stream
 	sendMu   sync.Mutex           // serializes all Send calls on the gRPC stream
 	inboxOk  bool
+	// inboxCh buffers responses for the stream sender. Committed watch events
+	// are no-gap: a full inbox closes the watcher instead of dropping an event.
 	inboxCh  chan pb.WatchResponse
+	doneCh   chan struct{}
 	watches  map[int64]watchEntry
 	progress map[int64]bool
 }
@@ -67,11 +70,17 @@ type watchEntry struct {
 // NewWatcher creates a new Watcher with a globally-unique ID for the
 // given gRPC watch stream.
 func NewWatcher(ws pb.Watch_WatchServer) *Watcher {
+	// Buffer short bursts from the write path while the gRPC sender drains.
+	// Manager.Distribute treats a full buffer as a slow watcher and evicts it;
+	// progress notifications are advisory and may be skipped on overflow.
+	const inboxCapacity = 64
+
 	return &Watcher{
 		id:       atomic.AddInt64(&watcherIDCounter, 1),
 		client:   ws,
 		inboxOk:  true,
-		inboxCh:  make(chan pb.WatchResponse, 64),
+		inboxCh:  make(chan pb.WatchResponse, inboxCapacity),
+		doneCh:   make(chan struct{}),
 		watches:  map[int64]watchEntry{},
 		progress: map[int64]bool{},
 	}
@@ -102,18 +111,29 @@ func (w *Watcher) Send(resp *pb.WatchResponse) error {
 	return w.client.Send(resp)
 }
 
-// Cleanup closes the watcher inbox channel, cancels all watches, and
-// removes itself from the manager.
+// Done is closed when the watcher shuts down, including server-side closure
+// of a slow watcher whose inbox stopped draining.
+func (w *Watcher) Done() <-chan struct{} {
+	return w.doneCh
+}
+
+// Cleanup removes the watcher from the manager, closes its inbox, and cancels
+// all watches. It is idempotent because both the client handler and the
+// server-side slow-watcher path can race to close the same watcher.
 func (w *Watcher) Cleanup(m *Manager, logger *slog.Logger) {
 	logger.Debug("watcher cleanup", "watcher_id", w.id)
 
-	// obtain watcher write lock and release at end of the function
-	w.Lock()
-	defer w.Unlock()
+	m.Unregister(w.id)
 
-	// close the watcher inbox channel
+	w.Lock()
+	if !w.inboxOk {
+		w.Unlock()
+		return
+	}
+
 	w.inboxOk = false
 	close(w.inboxCh)
+	close(w.doneCh)
 
 	// remove all watchIDs from watcher (in case Cancel was not processed)
 	for watchID, watch := range w.watches {
@@ -123,8 +143,7 @@ func (w *Watcher) Cleanup(m *Manager, logger *slog.Logger) {
 	for watchID := range w.progress {
 		delete(w.progress, watchID)
 	}
-
-	m.Unregister(w.id)
+	w.Unlock()
 }
 
 // CreateWatch handles watch create requests. Admission is gated by the
@@ -256,6 +275,11 @@ func (w *Watcher) CreateWatch(r *pb.WatchCreateRequest, latestRevision int64, co
 	// add watchID to the watcher
 	// obtain write lock, re-check admission floor, add, then release lock
 	w.Lock()
+	if !w.inboxOk {
+		w.Unlock()
+		cancelFunc()
+		return
+	}
 	if r.StartRevision > 0 {
 		if floor := getAdmissionFloor(); floor > 0 && r.StartRevision <= floor {
 			w.Unlock()
@@ -373,23 +397,40 @@ func (w *Watcher) ReportProgressOnInterval(committedRevision func() int64, logge
 			}
 		}
 
+		// Progress notifications are advisory watermarks, not entries in the
+		// event history; a later tick can supersede a skipped progress response.
 		if broadcast {
 			// send a single watch response to the dispatch channel
-			w.inboxCh <- pb.WatchResponse{
+			select {
+			case w.inboxCh <- pb.WatchResponse{
 				Header: &pb.ResponseHeader{
 					Revision: revision,
 				},
 				// using an invalid watch ID makes it a broadcast
 				WatchId: clientv3.InvalidWatchID,
+			}:
+			default:
+				logger.Warn("skipping watch progress notification: watcher inbox full",
+					"watcher_id", w.id,
+					"revision", revision,
+				)
 			}
 		} else {
 			// send a watch response for each watch ID to the dispatch channel
 			for _, watchID := range progressWatchIDs {
-				w.inboxCh <- pb.WatchResponse{
+				select {
+				case w.inboxCh <- pb.WatchResponse{
 					Header: &pb.ResponseHeader{
 						Revision: revision,
 					},
 					WatchId: watchID,
+				}:
+				default:
+					logger.Warn("skipping watch progress notification: watcher inbox full",
+						"watcher_id", w.id,
+						"watch_id", watchID,
+						"revision", revision,
+					)
 				}
 			}
 		}
