@@ -44,6 +44,10 @@ type Manager struct {
 	onPrimaryChange PrimaryChangeFunc
 	localElector    LocalElectorServer
 
+	// applyMu serializes ApplyClusterState's compound role transition.
+	// onPrimaryChange runs under this lock and must not re-enter
+	// ApplyClusterState on the same Manager.
+	applyMu       sync.Mutex
 	mu            sync.Mutex
 	electorAddr   string
 	electorConn   *grpc.ClientConn
@@ -84,6 +88,9 @@ func (m *Manager) SetPrimaryChangeFunc(fn PrimaryChangeFunc) {
 // transitions and reconnects gRPC clients to the current Elector
 // and Primary.
 func (m *Manager) ApplyClusterState(ctx context.Context, cs nodestate.ClusterState) {
+	m.applyMu.Lock()
+	defer m.applyMu.Unlock()
+
 	old := m.state.ClusterState()
 	m.state.SetClusterState(cs)
 
