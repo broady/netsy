@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"log/slog"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"google.golang.org/grpc/codes"
@@ -62,13 +63,25 @@ type Server struct {
 	// previousPrimary holds the identity of the last known Primary so
 	// that checkPreviousPrimary can contact it for a drain check even
 	// after the Primary has been cleared from ClusterState.
-	previousPrimary nodestate.NodeInfo
+	previousPrimary atomic.Pointer[nodestate.NodeInfo]
 
 	metrics      *Metrics
 	retryMetrics *metrics.RetryMetrics
 
 	heartbeatForwarderMu sync.RWMutex
 	heartbeatForwarder   HeartbeatForwarder
+}
+
+func (s *Server) loadPreviousPrimary() nodestate.NodeInfo {
+	prev := s.previousPrimary.Load()
+	if prev == nil {
+		return nodestate.NodeInfo{}
+	}
+	return *prev
+}
+
+func (s *Server) storePreviousPrimary(prev nodestate.NodeInfo) {
+	s.previousPrimary.Store(&prev)
 }
 
 // NewServer creates a new Elector gRPC server.

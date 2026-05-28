@@ -7,6 +7,7 @@ package elector
 import (
 	"context"
 	"log/slog"
+	"sync"
 	"testing"
 	"time"
 
@@ -286,17 +287,17 @@ func TestElectPrimaryOnceNoRegisteredNodes(t *testing.T) {
 
 func TestCheckPreviousPrimaryLocalReplica(t *testing.T) {
 	srv := newElectionTestServer()
-	srv.previousPrimary = nodestate.NodeInfo{
+	srv.storePreviousPrimary(nodestate.NodeInfo{
 		NodeID:            "node-a",
 		PeerAdvertiseAddr: "10.0.0.1:2381",
-	}
+	})
 	// Default Primary State is Replica.
 	err := srv.checkPreviousPrimary(context.Background())
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if srv.previousPrimary.NodeID != "" {
-		t.Fatalf("expected previousPrimary cleared, got %s", srv.previousPrimary.NodeID)
+	if prev := srv.loadPreviousPrimary(); prev.NodeID != "" {
+		t.Fatalf("expected previousPrimary cleared, got %s", prev.NodeID)
 	}
 }
 
@@ -304,18 +305,18 @@ func TestCheckPreviousPrimaryLocalActive(t *testing.T) {
 	srv := newElectionTestServer()
 	_ = srv.state.SetPrimary(nodestate.PrimaryStarting)
 	_ = srv.state.SetPrimary(nodestate.PrimaryActive)
-	srv.previousPrimary = nodestate.NodeInfo{
+	srv.storePreviousPrimary(nodestate.NodeInfo{
 		NodeID:            "node-a",
 		PeerAdvertiseAddr: "10.0.0.1:2381",
-	}
+	})
 
 	err := srv.checkPreviousPrimary(context.Background())
 	if err == nil {
 		t.Fatal("expected error when local node is still active primary")
 	}
 	// previousPrimary should NOT be cleared.
-	if srv.previousPrimary.NodeID != "node-a" {
-		t.Fatalf("expected previousPrimary preserved, got %s", srv.previousPrimary.NodeID)
+	if prev := srv.loadPreviousPrimary(); prev.NodeID != "node-a" {
+		t.Fatalf("expected previousPrimary preserved, got %s", prev.NodeID)
 	}
 }
 
@@ -324,17 +325,17 @@ func TestCheckPreviousPrimaryLocalDraining(t *testing.T) {
 	_ = srv.state.SetPrimary(nodestate.PrimaryStarting)
 	_ = srv.state.SetPrimary(nodestate.PrimaryActive)
 	_ = srv.state.SetPrimary(nodestate.PrimaryDraining)
-	srv.previousPrimary = nodestate.NodeInfo{
+	srv.storePreviousPrimary(nodestate.NodeInfo{
 		NodeID:            "node-a",
 		PeerAdvertiseAddr: "10.0.0.1:2381",
-	}
+	})
 
 	err := srv.checkPreviousPrimary(context.Background())
 	if err == nil {
 		t.Fatal("expected error when local node is still draining")
 	}
-	if srv.previousPrimary.NodeID != "node-a" {
-		t.Fatalf("expected previousPrimary preserved, got %s", srv.previousPrimary.NodeID)
+	if prev := srv.loadPreviousPrimary(); prev.NodeID != "node-a" {
+		t.Fatalf("expected previousPrimary preserved, got %s", prev.NodeID)
 	}
 }
 
@@ -344,4 +345,28 @@ func TestCheckPreviousPrimarySkipsWhenEmpty(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
+}
+
+func TestPreviousPrimaryConcurrentAccess(t *testing.T) {
+	srv := newElectionTestServer()
+
+	// previousPrimary is written by health checks and leadership callbacks,
+	// and read by the election loop. This test is intentionally a
+	// race-detector regression for the field-level synchronization contract.
+	var wg sync.WaitGroup
+	for i := 0; i < 8; i++ {
+		wg.Add(1)
+		go func(id int) {
+			defer wg.Done()
+			for j := 0; j < 1000; j++ {
+				srv.storePreviousPrimary(nodestate.NodeInfo{
+					NodeID:            "node-a",
+					MemberID:          uint64(id),
+					PeerAdvertiseAddr: "10.0.0.1:2381",
+				})
+				_ = srv.loadPreviousPrimary()
+			}
+		}(i)
+	}
+	wg.Wait()
 }
