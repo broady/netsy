@@ -283,7 +283,7 @@ func (r *Runner) onLoseLeadership() error {
 	}
 	r.server.nodeMap.Reset()
 	r.state.SetClusterPrimary(nodestate.NodeInfo{})
-	r.server.previousPrimary = nodestate.NodeInfo{}
+	r.server.storePreviousPrimary(nodestate.NodeInfo{})
 	if err := r.state.SetElector(nodestate.ElectorFollower); err != nil {
 		r.logger.Error("failed to transition elector state to follower", "error", err)
 	}
