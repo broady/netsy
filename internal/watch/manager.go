@@ -118,16 +118,12 @@ func (m *Manager) Distribute(record *proto.Record, prevRecord *proto.Record) {
 		}
 	}
 
-	// obtain read lock on all watchers
 	m.mu.RLock()
-	defer m.mu.RUnlock()
 
-	// loop over all watchers
+	var slowWatchers []*Watcher
 	for _, w := range m.watchers {
-		// obtain lock for all watcher watches
+		slow := false
 		w.RLock()
-		defer w.RUnlock()
-		// send to all watches that should receive the record
 		for watchID, watch := range w.watches {
 			if isWatchMatch(watch, record) {
 				msg.WatchId = watchID
@@ -136,9 +132,32 @@ func (m *Manager) Distribute(record *proto.Record, prevRecord *proto.Record) {
 				} else {
 					msg.Events[0].PrevKv = nil
 				}
-				w.inboxCh <- msg
+				select {
+				case w.inboxCh <- msg:
+				default:
+					// Preserve the watch stream's no-gap contract by failing the
+					// slow stream instead of dropping one committed event.
+					m.logger.Warn("closing slow watch stream: watcher inbox full",
+						"watcher_id", w.id,
+						"watch_id", watchID,
+						"revision", record.Revision,
+					)
+					slow = true
+				}
+				if slow {
+					break
+				}
 			}
 		}
+		w.RUnlock()
+		if slow {
+			slowWatchers = append(slowWatchers, w)
+		}
+	}
+	m.mu.RUnlock()
+
+	for _, w := range slowWatchers {
+		w.Cleanup(m, m.logger)
 	}
 }
 
